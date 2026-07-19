@@ -2,25 +2,39 @@
 
 MVP funcional em Next.js para acompanhar patrimônio, valores a receber, parcelas, gastos e a meta de R$ 10 mil.
 
-## O que já funciona
+## Novidades na Arquitetura e Engenharia de Software
 
-- Visão executiva orientada à decisão.
-- Dados iniciais preenchidos com os valores informados na conversa.
-- Persistência local no navegador (`localStorage`).
-- Cadastro de entradas e despesas.
-- Baixa de pagamentos/recebimentos com atualização do caixa.
-- Exclusão de lançamentos.
-- Projeção mensal de entradas e compromissos.
-- Calendário de parcelas e recebíveis.
-- Simulador da meta de R$ 10 mil.
-- Importação e revisão de CSV.
-- Upload de PDF/print para registro da sessão e conferência manual.
-- Layout responsivo para celular e desktop.
-- Fatura Unicred importada a partir dos prints enviados: **R$ 801,85** em lançamentos visíveis, com vencimento configurado para 11/08/2026.
-- Fatura Nubank de agosto/2026 importada: **R$ 192,40** em compras visíveis, vencimento em 10/08/2026. O pagamento recebido de **R$ 482,12** foi deliberadamente ignorado.
-- Subtotal visível combinado dos cartões em agosto: **R$ 994,25**.
-- Projeção de **R$ 436,66** em parcelas futuras identificáveis nos prints.
-- Arquivo de auditoria `unicred-lancamentos-extraidos.csv` com os lançamentos extraídos e as incertezas registradas.
+Implementamos uma base estável, robusta e modular de engenharia de software para garantir a integridade dos dados e preparar o sistema para produção (Supabase):
+
+### 1. Camada de Persistência Desacoplada (Repository Pattern)
+Toda a interação com o `localStorage` agora é intermediada por um repositório abstrato:
+- [finance-repository.ts](file:///c:/Users/marcu/Downloads/financasv3/financas-marcola/lib/storage/finance-repository.ts): Declaração da interface de leitura, escrita e submissão de transações.
+- [local-storage-repository.ts](file:///c:/Users/marcu/Downloads/financasv3/financas-marcola/lib/storage/local-storage-repository.ts): Implementação concreta baseada em browser.
+
+### 2. Migrações de Dados Versionadas e Seguras (Migration Runner)
+No carregamento do sistema, o [migration-runner.ts](file:///c:/Users/marcu/Downloads/financasv3/financas-marcola/lib/storage/migration-runner.ts) intercepta o estado:
+- Executa um backup de segurança automático e temporário antes de aplicar migrações.
+- Roda funções de upgrade incrementais atualizando o schema local de forma sequencial até a versão atual (`schemaVersion: 4`), prevenindo corrupção ou perda acidental de dados.
+
+### 3. Validação de Integridade Automatizada
+A biblioteca [validation.ts](file:///c:/Users/marcu/Downloads/financasv3/financas-marcola/lib/validation.ts) executa 4 regras críticas de sanidade:
+- **IDs Duplicados:** Garante chaves primárias únicas.
+- **Valores Extremos:** Alerta sobre valores vazios, negativos ou desproporcionais.
+- **Vínculos Órfãos:** Detecta pagamentos sem o lançamento de despesa correspondente.
+- **Anomalias Temporais:** Alerta sobre faturas fechadas com modificações pendentes ou datas de compra posteriores ao vencimento.
+Estas validações estão integradas na aba **Integridade** na **Central de Correções** do dashboard.
+
+### 4. Cobertura Completa de Testes (Vitest)
+Instalado o `vitest` com testes nas pastas `/tests`:
+- **Testes Unitários Financeiros:** Validação de cálculos de caixa, patrimônio e regras de vencimento de cartões.
+- **Testes de Integridade:** Validação das regras de validação contra anomalias.
+- **Testes de Integração de Fluxos completos:** Validação de fluxos ponta a ponta (cadastro, edição com trilha de auditoria, lixeira, backup automático e manual).
+
+## Rodar os Testes
+
+```bash
+npm run test
+```
 
 ## Rodar localmente
 
@@ -43,10 +57,11 @@ data;descricao;valor;tipo;categoria;conta
 
 Também aceita cabeçalhos equivalentes em inglês, como `date`, `description`, `amount`, `type`, `category` e `account`.
 
-## Limite conhecido desta V1
-
-PDFs e imagens ainda não são extraídos automaticamente pelo aplicativo. Os prints da Unicred e do Nubank enviados nesta conversa foram revisados e inseridos manualmente na base inicial. Alguns dados parcialmente cobertos — como o número da parcela de uma corrida 99 e a parcela do AliExpress — foram marcados como incertos e não tiveram compromissos futuros inventados.
-
-## Banco remoto opcional
-
-O arquivo `supabase/schema.sql` contém um modelo inicial para migrar do armazenamento local para PostgreSQL/Supabase. A V1 roda sem credenciais externas.
+## Estrutura de Componentes Modulares
+O dashboard principal foi refatorado e dividido em componentes focados, eliminando a dependência do arquivo monolítico gigante:
+- `Overview`: Visão geral e cartões de estatísticas rápidas.
+- `CorrectionCenter`: Resolução de pendências de categorias, lixeira, auditoria de mudanças e validações de integridade.
+- `LogViewerPage`: Monitoramento em tempo real de logs de diagnóstico e observabilidade do sistema.
+- `ToolsPage`: Gerenciamento e download de exportações manuais (CSV, JSON) e restauração de backups.
+- `RecoveryDiagnostics`: Painel técnico de reconciliação de dados recuperados.
+- `AllEntries`: Tabela tabular completa com todos os lançamentos ativos do sistema.

@@ -41,9 +41,7 @@ export function createBackup(state: FinanceState, label?: string): BackupMeta {
   };
   try {
     const backups = loadBackupList();
-    const store: Record<string, string> = {};
-    try { store.json = JSON.parse(localStorage.getItem("meu-financeiro-v3") || "{}"); } catch { /* ignore */ }
-    const backupData = { meta, state: store };
+    const backupData = { meta, state };
     backups.push(meta);
     while (backups.length > 50) backups.shift();
     localStorage.setItem(BACKUP_KEYS.manual, JSON.stringify(backups));

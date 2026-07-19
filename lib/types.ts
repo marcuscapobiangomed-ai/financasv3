@@ -45,6 +45,21 @@ export type FinanceState = {
   accounts: Account[];
   entries: FinanceEntry[];
   updatedAt: string;
+  schemaVersion?: number;
 };
 
-export type ViewKey = "overview" | "receivables" | "cards" | "spending" | "goal" | "imports" | "tools" | "logs" | "quality" | "corrections";
+export type ViewKey = "overview" | "receivables" | "cards" | "spending" | "goal" | "imports" | "tools" | "logs" | "quality" | "corrections" | "recovery_diagnostics" | "all_entries";
+
+export type InvoiceView = {
+  id: string;
+  card: string;
+  month: string;
+  closingDate: string;
+  dueDate: string;
+  officialTotal?: number;
+  identifiedSubtotal: number;
+  paidAmount: number;
+  status: "open" | "closed" | "paid" | "partial";
+  entries: FinanceEntry[];
+  dataQuality: DataQuality;
+};

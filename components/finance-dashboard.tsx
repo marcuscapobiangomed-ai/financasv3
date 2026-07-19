@@ -54,6 +54,12 @@ import { getMonthClose, saveChecklist, closeMonth, reopenMonth, getAllCloses, ty
 import { recordAudit, getAuditTrail, getAuditStats, getAllAuditEntries, type AuditEntry } from "@/lib/audit";
 import { trashEntry, restoreFromTrash, getTrashItems, getTrashCount, emptyTrash, type TrashItem } from "@/lib/trash";
 
+import { LogViewerPage } from "@/components/LogViewerPage";
+import { ToolsPage } from "@/components/ToolsPage";
+import { CorrectionCenter } from "@/components/CorrectionCenter";
+import { RecoveryDiagnostics } from "@/components/RecoveryDiagnostics";
+import { AllEntries } from "@/components/AllEntries";
+
 const STORAGE_KEY = "meu-financeiro-v3";
 const LEGACY_STORAGE_KEY = "meu-financeiro-v2";
 const CHART_COLORS = ["#ff7a18", "#ff9a44", "#ffc174", "#c96a26", "#855031", "#f2c094"];
@@ -734,7 +740,25 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
           {view === "tools" && <ToolsPage state={state} setState={setState} pushToast={pushToast} onRestoreModal={() => setRestoreModalOpen(true)} />}
           {view === "logs" && <LogViewerPage />}
           {view === "quality" && <QualityPage state={state} selectedPeriod={selectedPeriod} pushToast={pushToast} />}
-          {view === "corrections" && <CorrectionCenter state={state} selectedPeriod={selectedPeriod} entriesInPeriod={entriesFiltered} updateEntry={updateEntry} removeEntry={removeEntry} pushToast={pushToast} setState={setState} />}
+          {view === "corrections" && <CorrectionCenter state={state} selectedPeriod={selectedPeriod} entriesInPeriod={entriesFiltered} updateEntry={updateEntry} pushToast={pushToast} setState={setState} />}
+          {view === "recovery_diagnostics" && (
+            <RecoveryDiagnostics
+              state={state}
+              setState={setState}
+              pushToast={pushToast}
+            />
+          )}
+          {view === "all_entries" && (
+            <AllEntries
+              state={state}
+              setState={setState}
+              pushToast={pushToast}
+              onEdit={setEditingEntry}
+              setHistoryModalEntry={setHistoryModalEntry}
+              removeEntry={removeEntry}
+              today={todayStr}
+            />
+          )}
         </div>
       </main>
 
@@ -1942,184 +1966,8 @@ function EntryModal({ onClose, onSubmit, initialEntry, today, setHistoryModalEnt
   );
 }
 
-function LogViewerPage() {
-  const [logs, setLogs] = useState<ReturnType<typeof logger.loadAll>>([]);
-  const [filter, setFilter] = useState<LogCategory | "all">("all");
-  const [levelFilter, setLevelFilter] = useState<LogLevel | "all">("all");
-  const refresh = useCallback(() => {
-    const all = logger.loadAll();
-    setLogs(all);
-  }, []);
-
-  useEffect(() => { refresh(); const timer = setInterval(refresh, 5000); return () => clearInterval(timer); }, [refresh]);
-
-  const stats = logger.getStats();
-  const filtered = logs.filter((l) => {
-    if (filter !== "all" && l.category !== filter) return false;
-    if (levelFilter !== "all" && l.level !== levelFilter) return false;
-    return true;
-  });
-
-  return (
-    <>
-      <section className="decision-hero compact-hero" style={{ marginBottom: "24px" }}>
-        <div>
-          <span className="eyebrow"><ListTodo size={16} /> Observabilidade</span>
-          <h2 style={{ fontSize: "16px", fontWeight: 600, marginTop: "4px" }}>Monitoramento e logs do sistema</h2>
-          <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "4px" }}>{stats.total} eventos registrados · {stats.errors} erros · últimas 24h: {stats.last24h}</p>
-        </div>
-        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          <button className="secondary-button" style={{ fontSize: "11px", padding: "4px 10px" }} onClick={() => { logger.clear(); refresh(); }}>Limpar logs</button>
-          <button className="secondary-button" style={{ fontSize: "11px", padding: "4px 10px" }} onClick={refresh}>Atualizar</button>
-        </div>
-      </section>
-
-      <section className="dashboard-grid" style={{ gridTemplateColumns: "1fr" }}>
-        <article className="panel">
-          <div className="panel-heading">
-            <div><span>Filtros</span><h3>Filtrar por tipo e nível</h3></div>
-            <div style={{ display: "flex", gap: "8px" }}>
-              <select value={filter} onChange={(e) => setFilter(e.target.value as LogCategory | "all")} className="period-select" style={{ fontSize: "11px", padding: "4px 20px 4px 8px" }}>
-                <option value="all">Todas categorias</option>
-                {[...new Set(logs.map((l) => l.category))].map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <select value={levelFilter} onChange={(e) => setLevelFilter(e.target.value as LogLevel | "all")} className="period-select" style={{ fontSize: "11px", padding: "4px 20px 4px 8px" }}>
-                <option value="all">Todos níveis</option>
-                <option value="error">Erro</option>
-                <option value="warn">Aviso</option>
-                <option value="info">Info</option>
-                <option value="debug">Debug</option>
-              </select>
-            </div>
-          </div>
-          <div className="log-viewer" style={{ maxHeight: "500px", overflowY: "auto" }}>
-            {filtered.length === 0 ? (
-              <div className="empty-state"><span>Nenhum log encontrado.</span></div>
-            ) : (
-              filtered.slice().reverse().map((entry) => (
-                <div key={entry.id} className="log-entry">
-                  <span className="log-time">{new Date(entry.timestamp).toLocaleString("pt-BR")}</span>
-                  <span className={`log-level log-level-${entry.level}`}>{entry.level}</span>
-                  <span className="log-category">{entry.category}</span>
-                  <span className="log-message">{entry.message}</span>
-                  {entry.context && Object.keys(entry.context).length > 0 && (
-                    <span className="log-context" title={JSON.stringify(entry.context)}>{JSON.stringify(entry.context)}</span>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        </article>
-      </section>
-    </>
-  );
-}
-
-function ToolsPage({ state, setState, pushToast, onRestoreModal }: { state: FinanceState; setState: React.Dispatch<React.SetStateAction<FinanceState>>; pushToast: (message: string, type: ToastType, onUndo?: () => void, duration?: number) => void; onRestoreModal: () => void }) {
-  const [copied, setCopied] = useState(false);
-  const [backups, setBackups] = useState<BackupMeta[]>([]);
-  const [showImport, setShowImport] = useState(false);
-  const [importFile, setImportFile] = useState<File | null>(null);
-
-  useEffect(() => {
-    setBackups(loadBackupList());
-  }, []);
-
-  const handleExport = useCallback((format: "csv" | "json" | "full") => {
-    const start = performance.now();
-    if (format === "csv") exportCSV(state);
-    else if (format === "json") exportJSON(state);
-    else exportFullBackup(state);
-    const duration = performance.now() - start;
-    logger.info("export", `${format.toUpperCase()} export completed`, { duration: `${duration.toFixed(0)}ms` });
-  }, [state]);
-
-  return (
-    <>
-      <section className="decision-hero compact-hero" style={{ marginBottom: "24px" }}>
-        <div>
-          <span className="eyebrow"><Database size={16} /> Exportar e backup</span>
-          <h2 style={{ fontSize: "16px", fontWeight: 600, marginTop: "4px" }}>Proteja seus dados financeiros</h2>
-          <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "4px" }}>Backups automáticos a cada 5 minutos. Exporte manualmente quando quiser.</p>
-        </div>
-      </section>
-
-      <section className="dashboard-grid dashboard-grid-primary">
-        <article className="panel">
-          <div className="panel-heading"><div><span>Exportar dados</span><h3>Formatos disponíveis</h3></div><Download size={20} /></div>
-          <div className="export-bar">
-            <button className="export-button" onClick={() => handleExport("csv")}><Download size={14} />CSV</button>
-            <button className="export-button" onClick={() => handleExport("json")}><Download size={14} />JSON</button>
-            <button className="export-button" onClick={() => handleExport("full")}><Save size={14} />Backup completo</button>
-          </div>
-          <div className="privacy-note" style={{ borderTop: "none", paddingTop: 0 }}>
-            <ShieldCheck size={18}/>
-            <div><strong>Exportação privada</strong><span>Os dados são baixados diretamente para seu computador. Nenhum servidor intermediário.</span></div>
-          </div>
-        </article>
-        <article className="panel">
-          <div className="panel-heading"><div><span>Importar</span><h3>Restaurar backup JSON</h3></div></div>
-          <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-            <p style={{ fontSize: "13px", color: "var(--muted)" }}>Faça upload de um arquivo JSON de backup exportado anteriormente.</p>
-            <label className="upload-button" style={{ padding: "24px", cursor: "pointer", textAlign: "center" }}>
-              <Upload size={24} />
-              <span>Selecionar JSON</span>
-              <input type="file" accept=".json" onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) { setImportFile(file); setShowImport(true); }
-                e.target.value = "";
-              }} />
-            </label>
-            {showImport && importFile && (
-              <div style={{ fontSize: "12px", color: "var(--muted)" }}>
-                Arquivo: {importFile.name}
-                <button className="primary-button compact" style={{ marginLeft: "8px" }} onClick={onRestoreModal}>Restaurar</button>
-              </div>
-            )}
-          </div>
-        </article>
-      </section>
-
-      <section className="dashboard-grid" style={{ gridTemplateColumns: "1fr", marginTop: "24px" }}>
-        <article className="panel panel-wide">
-          <div className="panel-heading">
-            <div><span>Backups automáticos</span><h3>Últimos backups salvos (máx 50)</h3></div>
-            <button className="primary-button compact" onClick={() => { createBackup(state); setBackups(loadBackupList()); }}>
-              <Save size={15} />Criar backup agora
-            </button>
-          </div>
-          {backups.length === 0 ? (
-            <EmptyState title="Nenhum backup manual" description="Backups automáticos são criados a cada 5 minutos. Clique em 'Criar backup agora' para o primeiro." />
-          ) : (
-            <div className="backup-list">
-              {backups.slice().reverse().map((backup) => (
-                <div key={backup.id} className="backup-item">
-                  <div>
-                    <strong>{backup.label}</strong>
-                    <span>{new Date(backup.timestamp).toLocaleString("pt-BR")} · {backup.entryCount} lançamentos</span>
-                  </div>
-                  <div style={{ display: "flex", gap: "6px" }}>
-                    <button className="export-button" onClick={() => {
-                      const restored = restoreFromBackup(backup.id);
-                      if (restored) {
-                        createBackup(state, "Antes da restauração");
-                        setState(restored);
-                        logger.info("export", "Backup restored", { id: backup.id });
-                        pushToast("Backup restaurado com sucesso.", "success");
-                      } else {
-                        pushToast("Falha ao restaurar backup.", "danger");
-                      }
-                    }}><RotateCcw size={12} />Restaurar</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </article>
-      </section>
-    </>
-  );
-}
+// LogViewerPage importado de @/components/LogViewerPage
+// ToolsPage importado de @/components/ToolsPage
 
 function QualityPage({ state, selectedPeriod, pushToast }: { state: FinanceState; selectedPeriod: string; pushToast: (message: string, type: ToastType) => void }) {
   const [stats, setStats] = useState(analytics.getStats());
@@ -2258,203 +2106,7 @@ function QualityPage({ state, selectedPeriod, pushToast }: { state: FinanceState
   );
 }
 
-function CorrectionCenter({ state, selectedPeriod, entriesInPeriod, updateEntry, removeEntry, pushToast, setState }: {
-  state: FinanceState;
-  selectedPeriod: string;
-  entriesInPeriod: FinanceEntry[];
-  updateEntry: (id: string, updated: Omit<FinanceEntry, "id">) => void;
-  removeEntry: (id: string) => void;
-  pushToast: (message: string, type: ToastType) => void;
-  setState: React.Dispatch<React.SetStateAction<FinanceState>>;
-}) {
-  const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
-  const [auditEvents, setAuditEvents] = useState<AuditEntry[]>([]);
-  const [tab, setTab] = useState<"pendentes" | "lixeira" | "auditoria">("pendentes");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  const refresh = useCallback(() => {
-    setTrashItems(getTrashItems(selectedPeriod) as any);
-    setAuditEvents(getAllAuditEntries().slice(0, 100));
-  }, [selectedPeriod]);
-
-  useEffect(() => { refresh(); }, [refresh]);
-
-  const lowConfidence = entriesInPeriod.filter((e) => e.dataQuality === "parcial" || e.dataQuality === "estimado");
-  const noCategory = entriesInPeriod.filter((e) => !e.category || e.category === "Outros");
-  const closedPeriodChanges = entriesInPeriod.filter((e) => {
-    const period = e.dueDate.slice(0, 7);
-    return getMonthClose(period).status === "closed";
-  });
-
-  return (
-    <>
-      <section className="decision-hero compact-hero" style={{ marginBottom: "24px" }}>
-        <div>
-          <span className="eyebrow"><ClipboardList size={16} /> Central de Correções</span>
-          <h2 style={{ fontSize: "16px", fontWeight: 600, marginTop: "4px" }}>Revise e corrija seus dados</h2>
-          <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "4px" }}>
-            {lowConfidence.length} com baixa confiança · {noCategory.length} sem categoria · {closedPeriodChanges.length} em meses fechados · {trashItems.length} na lixeira
-          </p>
-        </div>
-        <button className="secondary-button" style={{ fontSize: "11px", padding: "4px 10px" }} onClick={refresh}>Atualizar</button>
-      </section>
-
-      <div className="type-toggle" role="tablist" style={{ marginBottom: "24px", background: "rgba(255,255,255,0.02)", border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: "2px", height: "40px", width: "fit-content" }}>
-        <button type="button" className={tab === "pendentes" ? "active" : ""} onClick={() => setTab("pendentes")} style={{ height: "34px", fontSize: "12px" }}>Pendências</button>
-        <button type="button" className={tab === "lixeira" ? "active" : ""} onClick={() => setTab("lixeira")} style={{ height: "34px", fontSize: "12px" }}>Lixeira ({trashItems.length})</button>
-        <button type="button" className={tab === "auditoria" ? "active" : ""} onClick={() => setTab("auditoria")} style={{ height: "34px", fontSize: "12px" }}>Auditoria</button>
-      </div>
-
-      {tab === "pendentes" && (
-        <section className="dashboard-grid" style={{ gridTemplateColumns: "1fr" }}>
-          {lowConfidence.length === 0 && noCategory.length === 0 && closedPeriodChanges.length === 0 ? (
-            <article className="panel">
-              <EmptyState title="Nenhuma pendência" description="Todos os lançamentos do período estão revisados e categorizados." />
-            </article>
-          ) : (
-            <>
-              {lowConfidence.length > 0 && (
-                <article className="panel">
-                  <div className="panel-heading"><div><span>Baixa confiança</span><h3>{lowConfidence.length} lançamentos com qualidade parcial ou estimada</h3></div></div>
-                  <div className="compact-list">
-                    {lowConfidence.slice(0, 10).map((entry) => (
-                      <div key={entry.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid var(--border)" }}>
-                        <div>
-                          <strong style={{ fontSize: "13px" }}>{entry.title}</strong>
-                          <small style={{ display: "block", fontSize: "11px", color: "var(--muted)" }}>{entry.category} · {brl.format(entry.amount)} · <span className={classNames("quality-badge", entry.dataQuality ?? "completo")}>{entry.dataQuality}</span></small>
-                        </div>
-                        <button className="secondary-button" style={{ fontSize: "11px", padding: "4px 10px" }} onClick={() => updateEntry(entry.id, { ...entry, dataQuality: "completo" })}>Confirmar</button>
-                      </div>
-                    ))}
-                  </div>
-                </article>
-              )}
-              {noCategory.length > 0 && (
-                <article className="panel">
-                  <div className="panel-heading"><div><span>Sem categoria</span><h3>{noCategory.length} lançamentos sem categoria definida</h3></div></div>
-                  <div className="compact-list">
-                    {noCategory.slice(0, 10).map((entry) => (
-                      <div key={entry.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid var(--border)" }}>
-                        <div>
-                          <strong style={{ fontSize: "13px" }}>{entry.title}</strong>
-                          <small style={{ display: "block", fontSize: "11px", color: "var(--muted)" }}>{brl.format(entry.amount)} · {entry.category}</small>
-                        </div>
-                        <select
-                          value={entry.category}
-                          onChange={(e) => updateEntry(entry.id, { ...entry, category: e.target.value })}
-                          style={{ fontSize: "12px", padding: "2px 6px", maxWidth: "120px" }}
-                        >
-                          {["Alimentação", "Tecnologia/IA", "Educação", "Saúde", "Transporte", "Lazer", "Mercado", "Streaming", "Seguros", "Outros"].map((cat) => (
-                            <option key={cat} value={cat}>{cat}</option>
-                          ))}
-                        </select>
-                      </div>
-                    ))}
-                  </div>
-                </article>
-              )}
-              {closedPeriodChanges.length > 0 && (
-                <article className="panel">
-                  <div className="panel-heading"><div><span>Meses fechados</span><h3>{closedPeriodChanges.length} lançamentos em períodos fechados</h3></div></div>
-                  <div className="compact-list">
-                    {closedPeriodChanges.slice(0, 10).map((entry) => (
-                      <div key={entry.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid var(--border)" }}>
-                        <div>
-                          <strong style={{ fontSize: "13px" }}>{entry.title}</strong>
-                          <small style={{ display: "block", fontSize: "11px", color: "var(--muted)" }}>{entry.dueDate.slice(0, 7)} · {brl.format(entry.amount)}</small>
-                        </div>
-                        <span className="status-badge warning">Mês fechado</span>
-                      </div>
-                    ))}
-                  </div>
-                </article>
-              )}
-            </>
-          )}
-        </section>
-      )}
-
-      {tab === "lixeira" && (
-        <section className="dashboard-grid" style={{ gridTemplateColumns: "1fr" }}>
-          <article className="panel">
-            <div className="panel-heading">
-              <div><span>Itens excluídos</span><h3>Restaurar ou limpar permanentemente</h3></div>
-              {trashItems.length > 0 && (
-                <button className="secondary-button" style={{ fontSize: "11px", padding: "4px 10px", color: "var(--danger)" }} onClick={() => { if (window.confirm("Esvaziar a lixeira permanentemente?")) { emptyTrash(); refresh(); pushToast("Lixeira esvaziada.", "info"); } }}>
-                  <Trash2 size={14} /> Esvaziar
-                </button>
-              )}
-            </div>
-            {trashItems.length === 0 ? (
-              <EmptyState title="Lixeira vazia" description="Itens excluídos aparecerão aqui e podem ser restaurados." />
-            ) : (
-              <div className="compact-list">
-                {trashItems.map((item) => {
-                  const entry = item.entry as any;
-                  return (
-                    <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid var(--border)" }}>
-                      <div>
-                        <strong style={{ fontSize: "13px" }}>{entry.title}</strong>
-                        <small style={{ display: "block", fontSize: "11px", color: "var(--muted)" }}>
-                          Excluído em {new Date(item.deletedAt).toLocaleString("pt-BR")} · {brl.format(entry.amount)} · {entry.category}
-                        </small>
-                      </div>
-                      <button className="primary-button compact" onClick={() => {
-                        const restored = restoreFromTrash(item.id) as any;
-                        if (restored) {
-                          const period = restored.dueDate?.slice(0, 7);
-                          setState((prev: FinanceState) => ({ ...prev, entries: [restored, ...prev.entries], updatedAt: new Date().toISOString() }));
-                          recordAudit(restored.id, "restored", [{ field: "restored", oldValue: "deleted", newValue: "active" }], restored);
-                          refresh();
-                          pushToast(`"${restored.title}" restaurado.`, "success");
-                        }
-                      }}>
-                        <RotateCcw size={14} /> Restaurar
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </article>
-        </section>
-      )}
-
-      {tab === "auditoria" && (
-        <section className="dashboard-grid" style={{ gridTemplateColumns: "1fr" }}>
-          <article className="panel">
-            <div className="panel-heading"><div><span>Registro de alterações</span><h3>Últimas {auditEvents.length} ações no sistema</h3></div></div>
-            <div className="compact-list" style={{ maxHeight: "500px", overflowY: "auto" }}>
-              {auditEvents.length === 0 ? (
-                <EmptyState title="Nenhuma alteração registrada" description="As edições realizadas aparecerão aqui com antes/depois." />
-              ) : (
-                auditEvents.map((audit) => (
-                  <div key={audit.id} style={{ padding: "8px 16px", borderBottom: "1px solid var(--border)", fontSize: "12px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span>
-                        <strong>{audit.action === "created" ? "Criado" : audit.action === "updated" ? "Editado" : audit.action === "deleted" ? "Excluído" : audit.action === "settled" ? "Baixa" : audit.action === "restored" ? "Restaurado" : audit.action}</strong>
-                        {' · '}{(audit.snapshot as any)?.title ?? "N/A"}
-                      </span>
-                      <span style={{ color: "var(--muted)" }}>{new Date(audit.timestamp).toLocaleString("pt-BR")}</span>
-                    </div>
-                    {audit.changes.length > 0 && (
-                      <div style={{ color: "var(--muted)", marginTop: "2px", fontSize: "11px" }}>
-                        {audit.changes.slice(0, 3).map((c, i) => (
-                          <span key={i}>{fieldLabel(c.field)}: {String(c.oldValue ?? "—")} → {String(c.newValue ?? "—")}{i < Math.min(audit.changes.length, 3) - 1 ? ' · ' : ''}</span>
-                        ))}
-                        {audit.changes.length > 3 && <span> · +{audit.changes.length - 3} campos</span>}
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          </article>
-        </section>
-      )}
-    </>
-  );
-}
+// CorrectionCenter importado de @/components/CorrectionCenter
 
 function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name: string; value: number; color?: string }>; label?: string }) {
   if (!active || !payload?.length) return null;

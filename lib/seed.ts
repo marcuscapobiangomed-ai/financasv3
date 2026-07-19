@@ -135,6 +135,7 @@ const nubankEntries: any[] = [
 ];
 
 export const initialFinanceState: FinanceState = {
+  schemaVersion: 4,
   goal: 10000,
   updatedAt: "2026-07-18T23:07:00-03:00",
   accounts: [
