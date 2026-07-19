@@ -1,0 +1,10 @@
+data_compra;descricao;valor;tipo;categoria;conta;parcela;vencimento;observacao
+2026-07-10;iFood - NuPay;50,99;despesa;Alimentação;Nubank;;2026-08-10;À vista
+2026-07-05;OpenAI - ChatGPT;103,48;despesa;IA e assinaturas;Nubank;;2026-08-10;Compra internacional
+2026-07-05;IOF de compra internacional;3,62;despesa;Taxas;Nubank;;2026-08-10;Relacionado à compra internacional
+2026-07-03;Pix no Crédito - Produtos Naturais;9,66;despesa;Saúde;Nubank;11/12;2026-08-10;Categoria provisória
+2026-07-03;Paraíso - Casa Planta e Pet;11,56;despesa;Casa e pet;Nubank;2/12;2026-08-10;
+2026-07-03;Pix no Crédito - Cartório;1,42;despesa;Documentos e taxas;Nubank;11/12;2026-08-10;
+2026-07-03;Pix no Crédito - Padaria da Ilha;3,29;despesa;Alimentação;Nubank;11/12;2026-08-10;
+2026-07-03;Pix no Crédito - EBANX;5,06;despesa;Compras online;Nubank;9/10;2026-08-10;Categoria provisória
+2026-07-03;iFood - NuPay;3,32;despesa;Alimentação;Nubank;11/12;2026-08-10;

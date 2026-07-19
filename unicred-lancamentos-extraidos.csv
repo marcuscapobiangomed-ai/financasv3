@@ -1,0 +1,47 @@
+﻿id;data_compra;vencimento;descricao;valor;categoria;conta;parcela;tipo_registro;observacao
+unicred-petite-2026-07-15;15/07/2026;11/08/2026;Petite Patisserie & Co;75,00;Alimentação;Unicred;à vista;fatura_aberta;
+unicred-iof-deepseek-2026-07-14;14/07/2026;11/08/2026;IOF — transação exterior;0,38;Taxas;Unicred;à vista;fatura_aberta;Relacionado à compra Deepseek
+unicred-deepseek-2026-07-14;14/07/2026;11/08/2026;Deepseek;10,85;IA e assinaturas;Unicred;à vista;fatura_aberta;Compra internacional
+unicred-ultrapopular-2026-07-14;14/07/2026;11/08/2026;Ultrapopular Vassoura;52,50;Saúde;Unicred;à vista;fatura_aberta;
+unicred-clickbus-2026-07-13;13/07/2026;11/08/2026;ClickBus;30,05;Transporte;Unicred;à vista;fatura_aberta;
+unicred-vodec-2026-07-12;12/07/2026;11/08/2026;Vodec Comércio de Alimentos;41,80;Alimentação;Unicred;à vista;fatura_aberta;
+unicred-restaurante-rodr-2026-07-10;10/07/2026;11/08/2026;Bar e Restaurante Rodr;70,00;Alimentação;Unicred;à vista;fatura_aberta;
+unicred-casa-atleta-2026-07-10;10/07/2026;11/08/2026;Casa do Atleta VR;104,98;Compras pessoais;Unicred;à vista;fatura_aberta;
+unicred-parada-celular-2026-07-08;08/07/2026;11/08/2026;Parada do Celular;30,00;Tecnologia;Unicred;à vista;fatura_aberta;
+unicred-muticafe-2026-07-08;08/07/2026;11/08/2026;Muticafe;23,50;Alimentação;Unicred;à vista;fatura_aberta;
+unicred-cafe-charutaria-2026-07-08;08/07/2026;11/08/2026;Café e Charutaria;9,00;Alimentação;Unicred;à vista;fatura_aberta;
+unicred-clickbus-2026-07-07;07/07/2026;11/08/2026;ClickBus;32,62;Transporte;Unicred;à vista;fatura_aberta;
+unicred-evaldo-2026-07-07;07/07/2026;11/08/2026;Evaldo Nunes de Andrade;14,00;Alimentação;Unicred;à vista;fatura_aberta;Categoria inferida pelo ícone do aplicativo
+unicred-shoppingparksul-2026-07-06;06/07/2026;11/08/2026;Shopping Park Sul;17,00;Compras pessoais;Unicred;à vista;fatura_aberta;Categoria provisória
+unicred-coffee-break-2026-07-06;06/07/2026;11/08/2026;Coffee Break;14,00;Alimentação;Unicred;à vista;fatura_aberta;
+unicred-zuhause-bier-2026-07-03;03/07/2026;11/08/2026;Zuhause Bier;69,40;Alimentação;Unicred;à vista;fatura_aberta;
+unicred-anuidade-2026-07-03;03/07/2026;11/08/2026;Anuidade — parcela;30,00;Taxas bancárias;Unicred;à vista;fatura_aberta;Lançamento aparece como à vista na fatura
+unicred-grazy-gourmet-2026-07-02;02/07/2026;11/08/2026;Grazy Espaço Gourmet;8,00;Alimentação;Unicred;à vista;fatura_aberta;
+unicred-99-2026-06-23;23/06/2026;11/08/2026;99;7,74;Transporte;Unicred;2/6;fatura_aberta;
+unicred-99-2026-06-16;16/06/2026;11/08/2026;99;5,12;Transporte;Unicred;parcelado — nº oculto;fatura_aberta;"Número da parcela ficou coberto no print; não foram criadas parcelas futuras"
+unicred-jpasantos-2026-06-06;06/06/2026;11/08/2026;JPA Santos Farmácia;36,11;Saúde;Unicred;2/2;fatura_aberta;
+unicred-drogaria-retiro-2026-06-05;05/06/2026;11/08/2026;Drogaria Retiro;36,46;Saúde;Unicred;2/3;fatura_aberta;
+unicred-shopee-nosso-lar-2026-04-14;14/04/2026;11/08/2026;Shopee — Nosso Lar Enxovais;19,08;Casa;Unicred;4/4;fatura_aberta;
+unicred-vivo-easy-2026-04-11;11/04/2026;11/08/2026;Vivo Easy Anual;30,00;Telefonia;Unicred;4/12;fatura_aberta;
+unicred-shopee-festas-2026-04-07;07/04/2026;11/08/2026;Shopee — Mam Festas e Produtos;5,23;Presentes e festas;Unicred;4/4;fatura_aberta;
+unicred-shopee-susstore-2026-02-09;09/02/2026;11/08/2026;Shopee — Susstore;21,54;Compras pessoais;Unicred;6/12;fatura_aberta;
+unicred-aliexpress-2025-09-11;11/09/2025;11/08/2026;AliExpress;7,49;Compras pessoais;Unicred;10/12?;fatura_aberta;"Número parcialmente coberto no print; parece 10/12. Parcelas futuras não projetadas"
+unicred-99-7-74-2026-09;;11/09/2026;99;7,74;Transporte;Unicred;3/6;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-99-7-74-2026-10;;11/10/2026;99;7,74;Transporte;Unicred;4/6;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-99-7-74-2026-11;;11/11/2026;99;7,74;Transporte;Unicred;5/6;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-99-7-74-2026-12;;11/12/2026;99;7,74;Transporte;Unicred;6/6;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-drogaria-retiro-2026-09;;11/09/2026;Drogaria Retiro;36,46;Saúde;Unicred;3/3;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-vivo-easy-2026-09;;11/09/2026;Vivo Easy Anual;30,00;Telefonia;Unicred;5/12;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-vivo-easy-2026-10;;11/10/2026;Vivo Easy Anual;30,00;Telefonia;Unicred;6/12;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-vivo-easy-2026-11;;11/11/2026;Vivo Easy Anual;30,00;Telefonia;Unicred;7/12;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-vivo-easy-2026-12;;11/12/2026;Vivo Easy Anual;30,00;Telefonia;Unicred;8/12;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-vivo-easy-2027-01;;11/01/2027;Vivo Easy Anual;30,00;Telefonia;Unicred;9/12;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-vivo-easy-2027-02;;11/02/2027;Vivo Easy Anual;30,00;Telefonia;Unicred;10/12;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-vivo-easy-2027-03;;11/03/2027;Vivo Easy Anual;30,00;Telefonia;Unicred;11/12;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-vivo-easy-2027-04;;11/04/2027;Vivo Easy Anual;30,00;Telefonia;Unicred;12/12;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-shopee-susstore-2026-09;;11/09/2026;Shopee — Susstore;21,54;Compras pessoais;Unicred;7/12;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-shopee-susstore-2026-10;;11/10/2026;Shopee — Susstore;21,54;Compras pessoais;Unicred;8/12;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-shopee-susstore-2026-11;;11/11/2026;Shopee — Susstore;21,54;Compras pessoais;Unicred;9/12;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-shopee-susstore-2026-12;;11/12/2026;Shopee — Susstore;21,54;Compras pessoais;Unicred;10/12;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-shopee-susstore-2027-01;;11/01/2027;Shopee — Susstore;21,54;Compras pessoais;Unicred;11/12;projecao_parcela;Projetado a partir do número da parcela visível no print
+unicred-shopee-susstore-2027-02;;11/02/2027;Shopee — Susstore;21,54;Compras pessoais;Unicred;12/12;projecao_parcela;Projetado a partir do número da parcela visível no print
