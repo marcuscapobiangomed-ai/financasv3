@@ -5,8 +5,14 @@ export const brl = new Intl.NumberFormat("pt-BR", {
   currency: "BRL",
 });
 
+export function parseLocalDate(dateStr: string): Date {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
 export function formatDate(date: string) {
-  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(new Date(`${date}T12:00:00`));
+  const localDate = parseLocalDate(date);
+  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(localDate);
 }
 
 export function monthKey(date: string) {

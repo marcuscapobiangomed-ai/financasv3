@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { getSummary, getSafeToSpend, isEntryInPeriod, parseCsv } from "../lib/finance";
+import { getSummary, getSafeToSpend, isEntryInPeriod, parseCsv, parseLocalDate } from "../lib/finance";
+import { divideCents } from "../lib/cents";
 import type { FinanceState, FinanceEntry } from "../lib/types";
 
 describe("isEntryInPeriod", () => {
@@ -107,5 +108,28 @@ describe("parseCsv", () => {
     expect(res[1].title).toBe("Passagem");
     expect(res[1].amount).toBe(80);
     expect(res[1].kind).toBe("expense");
+  });
+});
+
+describe("divideCents", () => {
+  it("divide 100.00 por 3 distribuindo o centavo restante de forma justa", () => {
+    const parts = divideCents(100.00, 3);
+    expect(parts).toEqual([33.34, 33.33, 33.33]);
+    const sum = parts.reduce((s, v) => s + v, 0);
+    expect(sum).toBe(100.00);
+  });
+
+  it("divide 50.00 por 4", () => {
+    const parts = divideCents(50.00, 4);
+    expect(parts).toEqual([12.50, 12.50, 12.50, 12.50]);
+  });
+});
+
+describe("parseLocalDate", () => {
+  it("analisa string YYYY-MM-DD no fuso local sem deslocamento UTC", () => {
+    const date = parseLocalDate("2026-08-11");
+    expect(date.getFullYear()).toBe(2026);
+    expect(date.getMonth()).toBe(7); // 0-indexed August
+    expect(date.getDate()).toBe(11);
   });
 });

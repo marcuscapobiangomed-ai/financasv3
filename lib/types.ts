@@ -73,7 +73,7 @@ export type FinanceState = {
   schemaVersion?: number;
 };
 
-export type ViewKey = "overview" | "receivables" | "cards" | "spending" | "goal" | "imports" | "tools" | "logs" | "quality" | "corrections" | "recovery_diagnostics" | "all_entries";
+export type ViewKey = "overview" | "receivables" | "cards" | "spending" | "goal" | "imports" | "tools" | "logs" | "quality" | "corrections" | "recovery_diagnostics" | "all_entries" | "calculation_audit";
 
 export type InvoiceView = {
   id: string;

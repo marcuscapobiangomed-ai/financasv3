@@ -60,6 +60,8 @@ import { CorrectionCenter } from "@/components/CorrectionCenter";
 import { RecoveryDiagnostics } from "@/components/RecoveryDiagnostics";
 import { AllEntries } from "@/components/AllEntries";
 import { financeCommandService } from "@/lib/storage/finance-command-service";
+import { CalculationMemoryModal } from "@/components/CalculationMemoryModal";
+import { CalculationAudit } from "@/components/CalculationAudit";
 
 const STORAGE_KEY = "meu-financeiro-v3";
 const LEGACY_STORAGE_KEY = "meu-financeiro-v2";
@@ -86,6 +88,7 @@ const NAV_GROUPS = [
     { key: "logs" as ViewKey, label: "Monitoramento", icon: ListTodo },
     { key: "quality" as ViewKey, label: "Qualidade", icon: Gauge },
     { key: "corrections" as ViewKey, label: "Central Correções", icon: ClipboardList },
+    { key: "calculation_audit" as ViewKey, label: "Auditoria de Cálculos", icon: ShieldCheck },
   ]},
 ];
 
@@ -203,6 +206,7 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
   const [editingEntry, setEditingEntry] = useState<FinanceEntry | null>(null);
   const [safetyMargin, setSafetyMargin] = useState(100);
   const [safeToSpendModalOpen, setSafeToSpendModalOpen] = useState(false);
+  const [calculationMemoryMetric, setCalculationMemoryMetric] = useState<"patrimony" | "reserve" | "receivables" | "safeToSpend" | "expenses" | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("online");
   const [restoreModalOpen, setRestoreModalOpen] = useState(false);
@@ -660,7 +664,8 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
               safeToSpendData={safeToSpendData}
               recommendations={recommendations}
               health={health}
-              onOpenSafeToSpendDetails={() => setSafeToSpendModalOpen(true)}
+              onOpenSafeToSpendDetails={() => setCalculationMemoryMetric("safeToSpend")}
+              onOpenCalculationMemory={(metric) => setCalculationMemoryMetric(metric)}
               safetyMargin={safetyMargin}
               currentClose={getMonthClose(selectedPeriod)}
               onNavigateQuality={() => setView("quality")}
@@ -702,6 +707,12 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
               today={todayStr}
             />
           )}
+          {view === "calculation_audit" && (
+            <CalculationAudit
+              state={state}
+              selectedPeriod={selectedPeriod}
+            />
+          )}
         </div>
       </main>
 
@@ -729,12 +740,12 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
 
       {entryModalOpen && <EntryModal onClose={() => setEntryModalOpen(false)} onSubmit={addEntry} today={todayStr} />}
       {editingEntry && <EntryModal onClose={() => setEditingEntry(null)} onSubmit={(entry) => { if (!Array.isArray(entry)) updateEntry(editingEntry.id, entry); }} initialEntry={editingEntry} today={todayStr} setHistoryModalEntry={setHistoryModalEntry} />}
-      {safeToSpendModalOpen && (
-        <SafeToSpendDetailsModal
-          onClose={() => setSafeToSpendModalOpen(false)}
-          data={safeToSpendData}
-          margin={safetyMargin}
-          setMargin={setSafetyMargin}
+      {calculationMemoryMetric && (
+        <CalculationMemoryModal
+          metric={calculationMemoryMetric}
+          state={state}
+          selectedPeriod={selectedPeriod}
+          onClose={() => setCalculationMemoryMetric(null)}
         />
       )}
       {connectionStatus === "offline" && <div className="offline-banner" role="alert">Você está offline. As alterações são salvas localmente.</div>}
@@ -906,6 +917,7 @@ function Overview({
   recommendations,
   health,
   onOpenSafeToSpendDetails,
+  onOpenCalculationMemory,
   safetyMargin,
   currentClose,
   onNavigateQuality,
@@ -922,6 +934,7 @@ function Overview({
   recommendations: Recommendation[];
   health: ReturnType<typeof getFinancialHealth>;
   onOpenSafeToSpendDetails: () => void;
+  onOpenCalculationMemory: (metric: "patrimony" | "reserve" | "receivables" | "safeToSpend" | "expenses") => void;
   safetyMargin: number;
   currentClose?: MonthClose;
   onNavigateQuality?: () => void;
@@ -975,14 +988,16 @@ function Overview({
           value={brl.format(summary.patrimony)} 
           subtitle="reserva + caixa disponível" 
           icon={WalletCards} 
-          tooltip="Soma total do Caixa disponível e da Reserva guardada."
+          onClick={() => onOpenCalculationMemory("patrimony")}
+          tooltip="Soma total do Caixa disponível e da Reserva guardada. Clique para ver a memória de cálculo."
         />
         <StatCard 
           title="Reserva" 
           value={brl.format(summary.reserve)} 
           subtitle="protegida, fora do consumo" 
           icon={ShieldCheck} 
-          tooltip="Dinheiro guardado e protegido, separado do caixa de consumo mensal."
+          onClick={() => onOpenCalculationMemory("reserve")}
+          tooltip="Dinheiro guardado e protegido, separado do caixa de consumo mensal. Clique para ver a memória de cálculo."
         />
         <StatCard 
           title="A receber" 
@@ -990,7 +1005,8 @@ function Overview({
           subtitle="confirmado e previsto" 
           icon={ArrowUpRight} 
           tone="positive" 
-          tooltip="Soma de recebimentos confirmados e previstos no período."
+          onClick={() => onOpenCalculationMemory("receivables")}
+          tooltip="Soma de recebimentos confirmados e previstos no período. Clique para ver a memória de cálculo."
         />
       </section>
 
