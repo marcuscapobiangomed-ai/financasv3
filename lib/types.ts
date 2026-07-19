@@ -7,6 +7,16 @@ export type EntryStatus =
   | "a_receber_confirmado"
   | "a_receber_incerto";
 export type PaidBy = "me" | "father" | "shared" | "reimbursable";
+export type EntryOrigin =
+  | "seed"
+  | "manual"
+  | "csv"
+  | "pdf"
+  | "image"
+  | "migration"
+  | "recovery"
+  | "recurrence";
+
 export type DataQuality = "completo" | "parcial" | "estimado";
 
 export type Account = {
@@ -38,12 +48,27 @@ export type FinanceEntry = {
   paymentDate?: string;
   dataQuality?: DataQuality;
   isOfficial?: boolean;
+  origin?: EntryOrigin;
+};
+
+export type Invoice = {
+  id: string;
+  cardId: string;
+  referenceMonth: string;
+  closingDate: string;
+  dueDate: string;
+  officialTotal?: number;
+  identifiedSubtotal: number;
+  status: "open" | "closed" | "paid" | "partial";
+  dataQuality: "completo" | "parcial" | "estimado";
+  sourceFileId?: string;
 };
 
 export type FinanceState = {
   goal: number;
   accounts: Account[];
   entries: FinanceEntry[];
+  invoices?: Invoice[];
   updatedAt: string;
   schemaVersion?: number;
 };

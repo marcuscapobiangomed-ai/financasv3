@@ -4,30 +4,30 @@ MVP funcional em Next.js para acompanhar patrimônio, valores a receber, parcela
 
 ## Novidades na Arquitetura e Engenharia de Software
 
-Implementamos uma base estável, robusta e modular de engenharia de software para garantir a integridade dos dados e preparar o sistema para produção (Supabase):
+A persistência foi desacoplada por Repository Pattern, com migrações versionadas, validações de integridade e testes automatizados:
 
 ### 1. Camada de Persistência Desacoplada (Repository Pattern)
 Toda a interação com o `localStorage` agora é intermediada por um repositório abstrato:
-- [finance-repository.ts](file:///c:/Users/marcu/Downloads/financasv3/financas-marcola/lib/storage/finance-repository.ts): Declaração da interface de leitura, escrita e submissão de transações.
-- [local-storage-repository.ts](file:///c:/Users/marcu/Downloads/financasv3/financas-marcola/lib/storage/local-storage-repository.ts): Implementação concreta baseada em browser.
+- [`finance-repository.ts`](./lib/storage/finance-repository.ts): Declaração da interface de leitura, escrita e submissão de transações.
+- [`local-storage-repository.ts`](./lib/storage/local-storage-repository.ts): Implementação concreta baseada em browser.
 
 ### 2. Migrações de Dados Versionadas e Seguras (Migration Runner)
-No carregamento do sistema, o [migration-runner.ts](file:///c:/Users/marcu/Downloads/financasv3/financas-marcola/lib/storage/migration-runner.ts) intercepta o estado:
+No carregamento do sistema, o [`migration-runner.ts`](./lib/storage/migration-runner.ts) intercepta o estado:
 - Executa um backup de segurança automático e temporário antes de aplicar migrações.
 - Roda funções de upgrade incrementais atualizando o schema local de forma sequencial até a versão atual (`schemaVersion: 4`), prevenindo corrupção ou perda acidental de dados.
 
 ### 3. Validação de Integridade Automatizada
-A biblioteca [validation.ts](file:///c:/Users/marcu/Downloads/financasv3/financas-marcola/lib/validation.ts) executa 4 regras críticas de sanidade:
+A biblioteca [`validation.ts`](./lib/validation.ts) executa regras críticas de sanidade:
 - **IDs Duplicados:** Garante chaves primárias únicas.
 - **Valores Extremos:** Alerta sobre valores vazios, negativos ou desproporcionais.
 - **Vínculos Órfãos:** Detecta pagamentos sem o lançamento de despesa correspondente.
 - **Anomalias Temporais:** Alerta sobre faturas fechadas com modificações pendentes ou datas de compra posteriores ao vencimento.
 Estas validações estão integradas na aba **Integridade** na **Central de Correções** do dashboard.
 
-### 4. Cobertura Completa de Testes (Vitest)
+### 4. Cobertura de Testes Unitários e Integração (Vitest)
 Instalado o `vitest` com testes nas pastas `/tests`:
 - **Testes Unitários Financeiros:** Validação de cálculos de caixa, patrimônio e regras de vencimento de cartões.
-- **Testes de Integridade:** Validação das regras de validação contra anomalias.
+- **Testes de Integridade:** Validação das regras contra anomalias e reconciliações de faturas.
 - **Testes de Integração de Fluxos completos:** Validação de fluxos ponta a ponta (cadastro, edição com trilha de auditoria, lixeira, backup automático e manual).
 
 ## Rodar os Testes

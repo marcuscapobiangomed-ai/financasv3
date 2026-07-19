@@ -1,8 +1,9 @@
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { ClipboardList, Pencil, History, Plus, Trash2 } from "lucide-react";
 import type { FinanceState, FinanceEntry } from "@/lib/types";
 import { formatDate, brl, monthLabel } from "@/lib/finance";
+import { financeCommandService } from "@/lib/storage/finance-command-service";
 
 type ToastType = "success" | "danger" | "info" | "neutral";
 
@@ -47,6 +48,19 @@ export function AllEntries({
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [
+    periodFilter,
+    dateTypeFilter,
+    accountFilter,
+    statusFilter,
+    originFilter,
+    qualityFilter,
+    searchQuery,
+  ]);
 
   // Extract unique periods for the filter
   const periods = useMemo(() => {
@@ -98,13 +112,10 @@ export function AllEntries({
 
       // 4. Origin filter
       if (originFilter !== "all") {
-        const isRec = entry.note?.includes("Recuperado") || (entry as any).recoveryOrigin === "seed";
-        const isImp = entry.note?.includes("Importado") || entry.account === "Importado";
-        const isMan = !isRec && !isImp;
-
-        if (originFilter === "recuperado" && !isRec) return false;
-        if (originFilter === "importado" && !isImp) return false;
-        if (originFilter === "manual" && !isMan) return false;
+        const origin = entry.origin || "manual";
+        if (originFilter === "recuperado" && origin !== "recovery" && origin !== "seed") return false;
+        if (originFilter === "importado" && origin !== "csv" && origin !== "pdf" && origin !== "image") return false;
+        if (originFilter === "manual" && origin !== "manual") return false;
       }
 
       // 5. Quality filter
@@ -137,18 +148,12 @@ export function AllEntries({
   const totalPages = Math.ceil(filteredEntries.length / pageSize) || 1;
 
   function handleDuplicate(entry: FinanceEntry) {
-    const duplicated = {
-      ...entry,
-      id: crypto.randomUUID(),
-      title: `${entry.title} (Cópia)`,
-      note: (entry.note || "") + " | Duplicado manualmente",
-    };
-    setState(prev => ({
-      ...prev,
-      entries: [duplicated, ...prev.entries],
-      updatedAt: new Date().toISOString(),
-    }));
-    pushToast("Lançamento duplicado com sucesso!", "success");
+    try {
+      financeCommandService.duplicateEntry(state, entry.id, setState);
+      pushToast("Lançamento duplicado com sucesso!", "success");
+    } catch (err: any) {
+      pushToast(err.message, "danger");
+    }
   }
 
   return (

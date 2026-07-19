@@ -13,29 +13,36 @@ export function buildInvoiceView(
 
   const identifiedSubtotal = entries.reduce((sum, e) => sum + e.amount, 0);
 
-  // Totais oficiais para Agosto de 2026 de acordo com os prints
-  let officialTotal: number | undefined;
-  let closingDate = `${month}-03`; // default
-  let dueDate = `${month}-10`; // default
-  
-  if (month === "2026-08") {
-    if (cardName === "Unicred") {
-      officialTotal = 801.85;
-      closingDate = "2026-08-03";
-      dueDate = "2026-08-11";
+  // Buscar na entidade persistente no estado se existir
+  const persistedInvoice = state.invoices?.find(
+    (inv) => inv.cardId.toLowerCase() === cardName.toLowerCase() && inv.referenceMonth === month
+  );
+
+  let officialTotal: number | undefined = persistedInvoice?.officialTotal;
+  let closingDate = persistedInvoice?.closingDate || `${month}-03`;
+  let dueDate = persistedInvoice?.dueDate || `${month}-10`;
+
+  if (!persistedInvoice) {
+    // Totais oficiais para Agosto de 2026 de acordo com os prints
+    if (month === "2026-08") {
+      if (cardName === "Unicred") {
+        officialTotal = 801.85;
+        closingDate = "2026-08-03";
+        dueDate = "2026-08-11";
+      } else {
+        officialTotal = 192.40;
+        closingDate = "2026-08-03";
+        dueDate = "2026-08-10";
+      }
     } else {
-      officialTotal = 192.40;
-      closingDate = "2026-08-03";
-      dueDate = "2026-08-10";
-    }
-  } else {
-    // defaults based on card
-    if (cardName === "Unicred") {
-      closingDate = `${month}-03`;
-      dueDate = `${month}-11`;
-    } else {
-      closingDate = `${month}-03`;
-      dueDate = `${month}-10`;
+      // defaults based on card
+      if (cardName === "Unicred") {
+        closingDate = `${month}-03`;
+        dueDate = `${month}-11`;
+      } else {
+        closingDate = `${month}-03`;
+        dueDate = `${month}-10`;
+      }
     }
   }
 

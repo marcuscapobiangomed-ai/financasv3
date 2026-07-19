@@ -59,6 +59,7 @@ import { ToolsPage } from "@/components/ToolsPage";
 import { CorrectionCenter } from "@/components/CorrectionCenter";
 import { RecoveryDiagnostics } from "@/components/RecoveryDiagnostics";
 import { AllEntries } from "@/components/AllEntries";
+import { financeCommandService } from "@/lib/storage/finance-command-service";
 
 const STORAGE_KEY = "meu-financeiro-v3";
 const LEGACY_STORAGE_KEY = "meu-financeiro-v2";
@@ -440,134 +441,72 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
   function settleEntry(entry: FinanceEntry) {
     if (entry.status === "recebido" || entry.status === "realizado") return;
     analytics.task("settle_entry", { kind: entry.kind, amount: entry.amount });
-    const cashAccount = state.accounts.find((account) => account.available);
-    const newStatus = entry.kind === "income" ? "recebido" : "realizado";
-    recordAudit(entry.id, "settled", [
-      { field: "status", oldValue: entry.status, newValue: newStatus },
-      { field: "paymentDate", oldValue: null, newValue: new Date().toLocaleDateString("sv-SE") },
-    ], { ...entry, status: newStatus, paymentDate: new Date().toLocaleDateString("sv-SE") } as any);
-    setState((previous) => ({
-      ...previous,
-      updatedAt: new Date().toISOString(),
-      accounts: previous.accounts.map((account) => {
-        if (!cashAccount || account.id !== cashAccount.id || entry.paidBy === "father") return account;
-        return { ...account, balance: account.balance + (entry.kind === "income" ? entry.amount : -entry.amount) };
-      }),
-      entries: previous.entries.map((item) => 
-        item.id === entry.id 
-          ? { ...item, status: newStatus, paymentDate: new Date().toLocaleDateString("sv-SE") } 
-          : item
-      ),
-    }));
-    setFeedbackModal({ action: "Dar baixa", category: "settle" });
+    try {
+      financeCommandService.settleEntry(state, entry.id, setState);
+      setFeedbackModal({ action: "Dar baixa", category: "settle" });
+    } catch (err: any) {
+      pushToast(err.message, "danger");
+    }
   }
 
   function removeEntry(id: string) {
     const entry = state.entries.find((e) => e.id === id);
     if (!entry) return;
     analytics.task("remove_entry", { kind: entry.kind });
-    recordAudit(entry.id, "deleted", [{ field: "deleted", oldValue: false, newValue: true }], { ...entry } as any);
-    trashEntry(entry as any);
-    setState((prev) => ({ ...prev, entries: prev.entries.filter((e) => e.id !== id), updatedAt: new Date().toISOString() }));
-    const restored = { ...entry };
-    const timeout = setTimeout(() => { pendingDeletes.current.delete(id); }, 5000);
-    pendingDeletes.current.set(id, timeout);
-    pushToast(
-      `"${entry.title}" movido para a lixeira.`,
-      "danger",
-      () => {
-        clearTimeout(pendingDeletes.current.get(id));
-        pendingDeletes.current.delete(id);
-        setState((prev) => ({ ...prev, entries: [restored, ...prev.entries], updatedAt: new Date().toISOString() }));
-      }
-    );
+    try {
+      financeCommandService.removeEntry(state, id, setState);
+      const restored = { ...entry };
+      const timeout = setTimeout(() => { pendingDeletes.current.delete(id); }, 5000);
+      pendingDeletes.current.set(id, timeout);
+      pushToast(
+        `"${entry.title}" movido para a lixeira.`,
+        "danger",
+        () => {
+          clearTimeout(pendingDeletes.current.get(id));
+          pendingDeletes.current.delete(id);
+          try {
+            financeCommandService.restoreEntry(state, restored, setState);
+          } catch (err: any) {
+            pushToast(err.message, "danger");
+          }
+        }
+      );
+    } catch (err: any) {
+      pushToast(err.message, "danger");
+    }
   }
 
   function addEntry(entry: Omit<FinanceEntry, "id"> | Omit<FinanceEntry, "id">[]) {
-    const newEntries = (Array.isArray(entry) ? entry : [entry]).map((e) => ({ ...e, id: crypto.randomUUID() }));
-
-    for (const ne of newEntries) {
-      recordAudit(ne.id, "created", [{ field: "created", oldValue: null, newValue: "entry" }], { ...ne } as any);
+    const list = Array.isArray(entry) ? entry : [entry];
+    const listWithOrigin = list.map(e => ({ ...e, origin: e.origin || "manual" as const }));
+    try {
+      const created = financeCommandService.createEntries(state, listWithOrigin, setState);
+      setEntryModalOpen(false);
+      analytics.task("add_entry", { count: created.length });
+      pushToast(
+        created.length > 1
+          ? `${created.length} parcelas adicionadas com sucesso.`
+          : `"${created[0].title}" adicionado com sucesso.`,
+        "success"
+      );
+      setFeedbackModal({ action: "Registrar lançamento", category: "add_entry" });
+    } catch (err: any) {
+      pushToast(err.message, "danger");
     }
-
-    setState((previous) => ({
-      ...previous,
-      updatedAt: new Date().toISOString(),
-      entries: [...newEntries, ...previous.entries],
-    }));
-    setEntryModalOpen(false);
-    analytics.task("add_entry", { count: newEntries.length });
-    pushToast(
-      newEntries.length > 1
-        ? `${newEntries.length} parcelas adicionadas com sucesso.`
-        : `"${newEntries[0].title}" adicionado com sucesso.`,
-      "success"
-    );
-    setFeedbackModal({ action: "Registrar lançamento", category: "add_entry" });
   }
 
   function updateEntry(id: string, updated: Omit<FinanceEntry, "id">) {
-    setState((previous) => {
-      const original = previous.entries.find((e) => e.id === id);
-      if (!original) return previous;
-
-      let balanceDiff = 0;
-      const cashAccount = previous.accounts.find((account) => account.available);
-
-      if (original.kind === "income" && original.status === "recebido" && updated.status !== "recebido") {
-        balanceDiff -= original.amount;
-      } else if (original.kind === "income" && original.status !== "recebido" && updated.status === "recebido") {
-        balanceDiff += updated.amount;
-      } else if (original.kind === "income" && original.status === "recebido" && updated.status === "recebido") {
-        balanceDiff += (updated.amount - original.amount);
-      }
-
-      if (original.kind === "expense" && original.paidBy !== "father" && original.status === "realizado" && updated.status !== "realizado") {
-        balanceDiff += original.amount;
-      } else if (original.kind === "expense" && updated.paidBy !== "father" && original.status !== "realizado" && updated.status === "realizado") {
-        balanceDiff -= updated.amount;
-      } else if (original.kind === "expense" && original.paidBy !== "father" && updated.paidBy !== "father" && original.status === "realizado" && updated.status === "realizado") {
-        balanceDiff -= (updated.amount - original.amount);
-      }
-
-      const newAccounts = previous.accounts.map((account) => {
-        if (!cashAccount || account.id !== cashAccount.id || balanceDiff === 0) return account;
-        return { ...account, balance: account.balance + balanceDiff };
-      });
-
-      let paymentDate = (updated as any).paymentDate || original.paymentDate;
-      if ((updated.status === "recebido" || updated.status === "realizado") && 
-          !(original.status === "recebido" || original.status === "realizado")) {
-        paymentDate = new Date().toLocaleDateString("sv-SE");
-      } else if (updated.status !== "recebido" && updated.status !== "realizado") {
-        paymentDate = undefined;
-      }
-
-      // Record audit
-      const changes: Array<{ field: string; oldValue: unknown; newValue: unknown }> = [];
-      const fieldsToCompare: Array<"title" | "amount" | "dueDate" | "status" | "category" | "account" | "paidBy" | "note" | "source"> = ["title", "amount", "dueDate", "status", "category", "account", "paidBy", "note", "source"];
-      for (const field of fieldsToCompare) {
-        if (String(original[field] ?? "") !== String(updated[field] ?? "")) {
-          changes.push({ field, oldValue: original[field], newValue: updated[field] });
-        }
-      }
-      if (changes.length > 0) {
-        recordAudit(id, "updated", changes, { ...updated, id, paymentDate } as any);
-      }
-
-      return {
-        ...previous,
-        updatedAt: new Date().toISOString(),
-        accounts: newAccounts,
-        entries: previous.entries.map((item) =>
-          item.id === id ? { ...updated, id, paymentDate } : item
-        ),
-      };
-    });
-    analytics.task("update_entry", { kind: updated.kind });
-    pushToast(`Lançamento atualizado.`, "info");
-    setEditingEntry(null);
-    setFeedbackModal({ action: "Editar lançamento", category: "edit_entry" });
+    try {
+      const origin = updated.origin || state.entries.find(e => e.id === id)?.origin || ("manual" as const);
+      const updatedWithOrigin = { ...updated, origin };
+      financeCommandService.updateEntry(state, id, updatedWithOrigin, setState);
+      analytics.task("update_entry", { kind: updated.kind });
+      pushToast(`Lançamento atualizado.`, "info");
+      setEditingEntry(null);
+      setFeedbackModal({ action: "Editar lançamento", category: "edit_entry" });
+    } catch (err: any) {
+      pushToast(err.message, "danger");
+    }
   }
 
   async function handleFile(event: ChangeEvent<HTMLInputElement>) {
@@ -601,7 +540,6 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
     const entries = importPreview.filter((entry) => entry.title && entry.amount).map((entry) => {
       const kind = entry.kind ?? "expense";
       return {
-        id: crypto.randomUUID(),
         title: sanitizeString(entry.title ?? "Lançamento importado"),
         amount: Number(entry.amount ?? 0),
         kind,
@@ -614,19 +552,24 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
         note: "Importado via CSV; revisar contra a fonte",
         dataQuality: "completo" as DataQuality,
         isOfficial: true,
-      } satisfies FinanceEntry;
+        origin: "csv" as const,
+      };
     });
     if (entries.length > RATE_LIMIT.maxEntriesPerImport) {
       pushToast(`Máximo de ${RATE_LIMIT.maxEntriesPerImport} lançamentos por importação.`, "danger");
       return;
     }
-    setState((previous) => ({ ...previous, entries: [...entries, ...previous.entries], updatedAt: new Date().toISOString() }));
-    logger.info("import", "Import confirmed", { entries: entries.length });
-    analytics.task("confirm_import", { count: entries.length });
-    setImportPreview([]);
-    clearImportChunk();
     createBackup(state, `Antes da importação de ${entries.length} lançamentos`);
-    setFeedbackModal({ action: "Importar", category: "import" });
+    try {
+      financeCommandService.createEntries(state, entries, setState);
+      logger.info("import", "Import confirmed", { entries: entries.length });
+      analytics.task("confirm_import", { count: entries.length });
+      setImportPreview([]);
+      clearImportChunk();
+      setFeedbackModal({ action: "Importar", category: "import" });
+    } catch (err: any) {
+      pushToast(err.message, "danger");
+    }
   }
 
   if (!hydrated) {

@@ -199,6 +199,30 @@ export function RecoveryDiagnostics({
     }
   }
 
+  // Financial reconciliation (Agosto 2026)
+  const finExpectedUnicred = 801.85;
+  const finFoundUnicred = browserEntries
+    .filter(e => e.account?.toLowerCase() === "unicred" && e.invoiceMonth === "2026-08")
+    .reduce((sum, e) => sum + e.amount, 0);
+
+  const finExpectedNubank = 192.40;
+  const finFoundNubank = browserEntries
+    .filter(e => e.account?.toLowerCase() === "nubank" && e.invoiceMonth === "2026-08")
+    .reduce((sum, e) => sum + e.amount, 0);
+
+  const finExpectedCombined = 994.25;
+  const finFoundCombined = finFoundUnicred + finFoundNubank;
+
+  const finExpectedFutureUnicred = 436.66;
+  const finFoundFutureUnicred = browserEntries
+    .filter(e => e.account?.toLowerCase() === "unicred" && e.dueDate > "2026-08-31" && e.status === "projetado")
+    .reduce((sum, e) => sum + e.amount, 0);
+
+  const finExpectedFutureNubank = 138.35;
+  const finFoundFutureNubank = browserEntries
+    .filter(e => e.account?.toLowerCase() === "nubank" && e.dueDate > "2026-08-31" && e.status === "projetado")
+    .reduce((sum, e) => sum + e.amount, 0);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
       <section className="decision-hero flex-col" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "16px", padding: "28px 32px" }}>
@@ -247,10 +271,56 @@ export function RecoveryDiagnostics({
             <span>Lixeira</span>
             <Trash2 size={18} />
           </div>
-          <strong>{trashItems.length}</strong>
-          <small>Lançamentos removidos</small>
         </article>
       </section>
+
+      {/* Reconciliação Financeira de Faturas */}
+      <article className="panel">
+        <div className="panel-heading">
+          <div>
+            <span>Reconciliação de Faturas (Agosto 2026)</span>
+            <h3>Prova de Integridade e Valores de Controle</h3>
+          </div>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table className="entry-table" style={{ width: "100%", fontSize: "12px" }}>
+            <thead>
+              <tr>
+                <th>Cartão / Período</th>
+                <th>Esperado (Prints)</th>
+                <th>Identificado (Base)</th>
+                <th>Divergência</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                { label: "Fatura Unicred (Agosto 2026)", expected: finExpectedUnicred, found: finFoundUnicred },
+                { label: "Fatura Nubank (Agosto 2026)", expected: finExpectedNubank, found: finFoundNubank },
+                { label: "Combinado (Agosto 2026)", expected: finExpectedCombined, found: finFoundCombined },
+                { label: "Futuro Projetado (Unicred)", expected: finExpectedFutureUnicred, found: finFoundFutureUnicred },
+                { label: "Futuro Projetado (Nubank)", expected: finExpectedFutureNubank, found: finFoundFutureNubank },
+              ].map((g, i) => {
+                const diff = g.found - g.expected;
+                const isReconciled = Math.abs(diff) < 0.01;
+                const statusColor = isReconciled ? "var(--success)" : "var(--danger)";
+                const statusLabel = isReconciled ? "Reconciliado" : diff > 0 ? `+ ${brl.format(diff)} extra` : `- ${brl.format(Math.abs(diff))} divergência`;
+                return (
+                  <tr key={i}>
+                    <td><strong>{g.label}</strong></td>
+                    <td>{brl.format(g.expected)}</td>
+                    <td>{brl.format(g.found)}</td>
+                    <td style={{ color: statusColor, fontWeight: "bold" }}>
+                      {isReconciled ? "R$ 0,00" : (diff > 0 ? "+" : "-") + brl.format(Math.abs(diff))}
+                    </td>
+                    <td style={{ color: statusColor, fontWeight: "bold" }}>{statusLabel}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </article>
 
       {/* Relatório de Reconciliação */}
       <article className="panel">

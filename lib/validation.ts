@@ -141,5 +141,23 @@ export function validateDataIntegrity(state: FinanceState): IntegrityIssue[] {
     });
   }
 
+  // 4. General Invoice Official Total Reconciliations
+  if (Array.isArray(state.invoices)) {
+    state.invoices.forEach((inv) => {
+      const subtotal = entries
+        .filter((e) => e.account?.toLowerCase() === inv.cardId.toLowerCase() && e.invoiceMonth === inv.referenceMonth)
+        .reduce((sum, e) => sum + e.amount, 0);
+
+      if (inv.officialTotal !== undefined && Math.abs(subtotal - inv.officialTotal) > 0.01) {
+        issues.push({
+          type: "warning",
+          code: `INVOICE_RECONCILIATION_MISMATCH_${inv.cardId.toUpperCase()}_${inv.referenceMonth.replace("-", "_")}`,
+          message: `Divergência na fatura ${inv.cardId} (${inv.referenceMonth}): o subtotal identificado (R$ ${subtotal.toFixed(2)}) difere do total oficial cadastrado (R$ ${inv.officialTotal.toFixed(2)}).`,
+          details: `Diferença de R$ ${(subtotal - inv.officialTotal).toFixed(2)}. Verifique se há compras faltando ou duplicadas nesta fatura.`,
+        });
+      }
+    });
+  }
+
   return issues;
 }

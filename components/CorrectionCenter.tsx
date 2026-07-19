@@ -6,6 +6,7 @@ import { getAllAuditEntries, recordAudit, type AuditEntry } from "@/lib/audit";
 import { getTrashItems, restoreFromTrash, emptyTrash, type TrashItem } from "@/lib/trash";
 import { formatDate, brl, monthLabel } from "@/lib/finance";
 import { validateDataIntegrity, type IntegrityIssue } from "@/lib/validation";
+import { financeCommandService } from "@/lib/storage/finance-command-service";
 
 type ToastType = "success" | "danger" | "info" | "neutral";
 
@@ -190,10 +191,13 @@ export function CorrectionCenter({
                       <button className="primary-button compact" onClick={() => {
                         const restored = restoreFromTrash(item.id) as any;
                         if (restored) {
-                          setState((prev: FinanceState) => ({ ...prev, entries: [restored, ...prev.entries], updatedAt: new Date().toISOString() }));
-                          recordAudit(restored.id, "restored", [{ field: "restored", oldValue: "deleted", newValue: "active" }], restored);
-                          refresh();
-                          pushToast(`"${restored.title}" restaurado.`, "success");
+                          try {
+                            financeCommandService.restoreEntry(state, restored, setState);
+                            refresh();
+                            pushToast(`"${restored.title}" restaurado.`, "success");
+                          } catch (err: any) {
+                            pushToast(err.message, "danger");
+                          }
                         }
                       }}>
                         <RotateCcw size={14} /> Restaurar

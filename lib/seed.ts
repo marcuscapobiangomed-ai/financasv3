@@ -22,6 +22,7 @@ function mapCardEntries(entries: any[], accountName: string): FinanceEntry[] {
       dataQuality: isFuture ? "estimado" : "parcial",
       isOfficial: false,
       status: isFuture ? "projetado" : "a_pagar",
+      origin: "seed",
     };
   });
 }
@@ -53,6 +54,7 @@ function mapOtherEntries(entries: any[]): FinanceEntry[] {
       status: newStatus,
       dataQuality,
       isOfficial: entry.isOfficial ?? true,
+      origin: "seed",
     };
   });
 }
@@ -138,6 +140,30 @@ export const initialFinanceState: FinanceState = {
   schemaVersion: 4,
   goal: 10000,
   updatedAt: "2026-07-18T23:07:00-03:00",
+  invoices: [
+    {
+      id: "invoice-unicred-2026-08",
+      cardId: "Unicred",
+      referenceMonth: "2026-08",
+      closingDate: "2026-08-03",
+      dueDate: "2026-08-11",
+      officialTotal: 801.85,
+      identifiedSubtotal: 801.85,
+      status: "closed",
+      dataQuality: "completo",
+    },
+    {
+      id: "invoice-nubank-2026-08",
+      cardId: "Nubank",
+      referenceMonth: "2026-08",
+      closingDate: "2026-08-03",
+      dueDate: "2026-08-10",
+      officialTotal: 192.40,
+      identifiedSubtotal: 192.40,
+      status: "closed",
+      dataQuality: "completo",
+    },
+  ],
   accounts: [
     {
       id: "cofrinho",

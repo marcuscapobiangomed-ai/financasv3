@@ -14,19 +14,56 @@ const migrations: Migration[] = [
     migrate(state: any): any {
       logger.info("system", "Migrating database structure from legacy schema to v4...");
       const entries = Array.isArray(state.entries) ? state.entries.map((entry: any) => {
+        let origin = entry.origin;
+        if (!origin) {
+          if (entry.note?.includes("Importado") || entry.note?.includes("CSV") || entry.account?.toLowerCase() === "importado") {
+            origin = "csv";
+          } else if (entry.id?.startsWith("unicred-") || entry.id?.startsWith("nubank-")) {
+            origin = "seed";
+          } else {
+            origin = "manual";
+          }
+        }
         return {
           ...entry,
           dataQuality: entry.dataQuality || "completo",
           paidBy: entry.paidBy || "me",
           isOfficial: entry.isOfficial !== undefined ? entry.isOfficial : true,
           installment: entry.installment || undefined,
+          origin,
         };
       }) : [];
+
+      const defaultInvoices = [
+        {
+          id: "invoice-unicred-2026-08",
+          cardId: "Unicred",
+          referenceMonth: "2026-08",
+          closingDate: "2026-08-03",
+          dueDate: "2026-08-11",
+          officialTotal: 801.85,
+          identifiedSubtotal: 801.85,
+          status: "closed" as const,
+          dataQuality: "completo" as const,
+        },
+        {
+          id: "invoice-nubank-2026-08",
+          cardId: "Nubank",
+          referenceMonth: "2026-08",
+          closingDate: "2026-08-03",
+          dueDate: "2026-08-10",
+          officialTotal: 192.40,
+          identifiedSubtotal: 192.40,
+          status: "closed" as const,
+          dataQuality: "completo" as const,
+        },
+      ];
 
       return {
         ...state,
         schemaVersion: 4,
         entries,
+        invoices: state.invoices || defaultInvoices,
       };
     }
   }
