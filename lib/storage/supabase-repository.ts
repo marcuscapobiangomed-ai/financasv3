@@ -90,14 +90,22 @@ export class SupabaseFinanceRepository implements FinanceRepository {
   }
 
   async saveState(state: FinanceState): Promise<void> {
-    // 1. Meta
-    await supabase
+    const now = new Date().toISOString();
+
+    // Helper: lança erro se Supabase retornar error
+    const check = (error: any, ctx: string) => {
+      if (error) throw new Error(`[Supabase] ${ctx}: ${error.message || JSON.stringify(error)}`);
+    };
+
+    // 1. Meta / perfil
+    const { error: profileErr } = await supabase
       .from("profiles")
-      .upsert([{ id: this.userId, goal: Math.round(state.goal * 100), updated_at: new Date().toISOString() }]);
+      .upsert([{ id: this.userId, goal: Math.round(state.goal * 100), updated_at: now }]);
+    check(profileErr, "profiles.upsert");
 
     // 2. Contas
     if (state.accounts.length > 0) {
-      await supabase.from("accounts").upsert(
+      const { error: accErr } = await supabase.from("accounts").upsert(
         state.accounts.map((a) => ({
           id: a.id,
           user_id: this.userId,
@@ -106,14 +114,15 @@ export class SupabaseFinanceRepository implements FinanceRepository {
           balance_cents: Math.round(a.balance * 100),
           available: a.available,
           note: a.note || null,
-          updated_at: new Date().toISOString(),
+          updated_at: now,
         }))
       );
+      check(accErr, "accounts.upsert");
     }
 
     // 3. Faturas
     if (state.invoices && state.invoices.length > 0) {
-      await supabase.from("invoices").upsert(
+      const { error: invErr } = await supabase.from("invoices").upsert(
         state.invoices.map((i) => ({
           id: i.id,
           card_id: i.cardId,
@@ -126,53 +135,62 @@ export class SupabaseFinanceRepository implements FinanceRepository {
           status: i.status,
           data_quality: i.dataQuality,
           source_file_id: i.sourceFileId || null,
-          updated_at: new Date().toISOString(),
+          updated_at: now,
         }))
       );
+      check(invErr, "invoices.upsert");
     }
 
-    // 4. Lançamentos
+    // 4. Lançamentos em lotes de 100
     if (state.entries.length > 0) {
-      await supabase.from("transactions").upsert(
-        state.entries.map((e) => ({
-          id: e.id,
-          user_id: this.userId,
-          title: e.title,
-          amount_cents: Math.round(e.amount * 100),
-          kind: e.kind,
-          due_date: e.dueDate,
-          payment_date: e.paymentDate || null,
-          status: e.status,
-          category: e.category,
-          account_id: e.account || null,
-          paid_by: e.paidBy,
-          origin: e.origin,
-          data_quality: e.dataQuality || "high",
-          is_official: e.isOfficial,
-          note: e.note || null,
-          invoice_month: e.invoiceMonth || null,
-          installment: e.installment || null,
-          updated_at: new Date().toISOString(),
-        }))
-      );
+      const BATCH = 100;
+      const rows = state.entries.map((e) => ({
+        id: e.id,
+        user_id: this.userId,
+        title: e.title,
+        amount_cents: Math.round(e.amount * 100),
+        kind: e.kind,
+        due_date: e.dueDate,
+        payment_date: e.paymentDate || null,
+        status: e.status,
+        category: e.category,
+        account_id: e.account || null,
+        paid_by: e.paidBy,
+        origin: e.origin,
+        data_quality: e.dataQuality || "high",
+        is_official: e.isOfficial,
+        note: e.note || null,
+        invoice_month: e.invoiceMonth || null,
+        installment: e.installment || null,
+        updated_at: now,
+      }));
 
-      // 5. Exclusão lógica remota
+      for (let i = 0; i < rows.length; i += BATCH) {
+        const { error: txErr } = await supabase
+          .from("transactions")
+          .upsert(rows.slice(i, i + BATCH));
+        check(txErr, `transactions.upsert lote ${Math.floor(i / BATCH) + 1}`);
+      }
+
+      // 5. Exclusão lógica de entradas removidas localmente
       const activeIds = state.entries.map((e) => e.id);
-      const { data: remoteActive } = await supabase
+      const { data: remoteActive, error: listErr } = await supabase
         .from("transactions")
         .select("id")
         .eq("user_id", this.userId)
         .is("deleted_at", null);
+      check(listErr, "transactions.select(ids)");
 
       const remoteIds = (remoteActive || []).map((r: any) => r.id);
       const toDelete = remoteIds.filter((id: string) => !activeIds.includes(id));
 
       if (toDelete.length > 0) {
-        await supabase
+        const { error: delErr } = await supabase
           .from("transactions")
           .update({ deleted_at: new Date().toISOString() })
           .eq("user_id", this.userId)
           .in("id", toDelete);
+        check(delErr, "transactions.soft-delete");
       }
     }
   }
