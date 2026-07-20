@@ -6,7 +6,7 @@ import { createBackup, restoreFromBackup, loadBackupList } from "../backup";
 const STORAGE_KEY = "meu-financeiro-v3";
 
 export class LocalStorageRepository implements FinanceRepository {
-  loadState(): FinanceState {
+  async loadState(): Promise<FinanceState> {
     if (typeof window === "undefined") {
       return initialFinanceState;
     }
@@ -24,7 +24,7 @@ export class LocalStorageRepository implements FinanceRepository {
     return initialFinanceState;
   }
 
-  saveState(state: FinanceState): void {
+  async saveState(state: FinanceState): Promise<void> {
     if (typeof window === "undefined") return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -33,16 +33,16 @@ export class LocalStorageRepository implements FinanceRepository {
     }
   }
 
-  createBackup(state: FinanceState, label?: string) {
+  async createBackup(state: FinanceState, label?: string) {
     return createBackup(state, label);
   }
 
-  restoreBackup(backupId: string): FinanceState | null {
+  async restoreBackup(backupId: string): Promise<FinanceState | null> {
     return restoreFromBackup(backupId);
   }
 
-  loadBackupList() {
+  async loadBackupList() {
     return loadBackupList();
   }
 }
-export const financeRepository: FinanceRepository = new LocalStorageRepository();
+export const financeRepository = new LocalStorageRepository();

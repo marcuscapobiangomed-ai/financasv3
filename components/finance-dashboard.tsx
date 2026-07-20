@@ -37,7 +37,11 @@ import {
   Upload,
   WalletCards,
   Wifi,
-  WifiOff,
+  Cloud,
+  CloudOff,
+  CloudLightning,
+  LogOut,
+  RefreshCw,
   X,
 } from "lucide-react";
 import { initialFinanceState } from "@/lib/seed";
@@ -62,6 +66,11 @@ import { AllEntries } from "@/components/AllEntries";
 import { financeCommandService } from "@/lib/storage/finance-command-service";
 import { CalculationMemoryModal } from "@/components/CalculationMemoryModal";
 import { CalculationAudit } from "@/components/CalculationAudit";
+import { supabase } from "@/lib/supabase";
+import { SupabaseFinanceRepository } from "@/lib/storage/supabase-repository";
+import { LocalStorageRepository } from "@/lib/storage/local-storage-repository";
+import { AuthPage } from "@/components/AuthPage";
+import { MigrationWizard } from "@/components/MigrationWizard";
 
 const STORAGE_KEY = "meu-financeiro-v3";
 const LEGACY_STORAGE_KEY = "meu-financeiro-v2";
@@ -209,6 +218,10 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
   const [calculationMemoryMetric, setCalculationMemoryMetric] = useState<"patrimony" | "reserve" | "receivables" | "safeToSpend" | "expenses" | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("online");
+  const [user, setUser] = useState<any>(null);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [showMigrationWizard, setShowMigrationWizard] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<"synced" | "syncing" | "pending" | "offline">("synced");
   const [restoreModalOpen, setRestoreModalOpen] = useState(false);
   const [restoreJson, setRestoreJson] = useState("");
   const [pageSize, setPageSize] = useState(25);
@@ -231,86 +244,90 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
     setTodayStr(today);
     setSelectedPeriod(today.slice(0, 7));
 
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored) as FinanceState;
+    // 1. Verificar sessão inicial
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        setUser(session.user);
+        const repo = new SupabaseFinanceRepository(session.user.id);
+        repo.loadState().then((remoteData) => {
+          setState(remoteData);
+          setHydrated(true);
+        });
+      } else {
+        loadLocalData();
+      }
+    });
+
+    // 2. Ouvir mudanças de autenticação
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session) {
+        setUser(session.user);
+        const repo = new SupabaseFinanceRepository(session.user.id);
+        const remoteData = await repo.loadState();
         
-        // Migração automática para o Willian Júnior (de 3 para 7 parcelas)
-        const willianEntries = parsed.entries.filter(
-          (e) => e.source === "Willian Júnior" || e.title === "Willian Júnior"
-        );
-        if (willianEntries.length === 3) {
-          const otherEntries = parsed.entries.filter(
-            (e) => e.source !== "Willian Júnior" && e.title !== "Willian Júnior"
-          );
-          const newWillianEntries = initialFinanceState.entries.filter(
-            (e) => e.source === "Willian Júnior" || e.title === "Willian Júnior"
-          );
-          parsed.entries = [...newWillianEntries, ...otherEntries];
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+        // Se o banco remoto estiver vazio mas houver dados locais, ativa o Wizard
+        const localRaw = window.localStorage.getItem(STORAGE_KEY);
+        if (localRaw) {
+          const localParsed = JSON.parse(localRaw) as FinanceState;
+          if (remoteData.entries.length === 0 && localParsed.entries.length > 0) {
+            setShowMigrationWizard(true);
+            return;
+          }
         }
+        setState(remoteData);
+        setHydrated(true);
+      } else {
+        setUser(null);
+        loadLocalData();
+      }
+    });
 
-        // Migração automática para o Curso Medcel (adicionar as 12 parcelas caso não existam)
-        const medcelEntries = parsed.entries.filter(
-          (e) => e.title === "Curso Medcel"
-        );
-        if (medcelEntries.length === 0) {
-          const newMedcelEntries = initialFinanceState.entries.filter(
-            (e) => e.title === "Curso Medcel"
-          );
-          parsed.entries = [...newMedcelEntries, ...parsed.entries];
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
-        }
-
-        // Migração automática para qualidade de dados e campos oficiais
-        let qualityMigrated = false;
-        parsed.entries = parsed.entries.map((entry) => {
-          if (!entry.dataQuality || entry.isOfficial === undefined) {
-            qualityMigrated = true;
+    function loadLocalData() {
+      const stored = window.localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as FinanceState;
+          parsed.entries = parsed.entries.map((entry) => {
             const isCard = entry.account === "Nubank" || entry.account === "Unicred";
             return {
               ...entry,
               dataQuality: entry.dataQuality || (isCard ? (entry.status === "projetado" ? "estimado" : "parcial") : "completo"),
               isOfficial: entry.isOfficial ?? !isCard,
             };
-          }
-          return entry;
-        });
-        if (qualityMigrated) {
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+          });
+          setState(parsed);
+        } catch {
+          window.localStorage.removeItem(STORAGE_KEY);
         }
-
-        setState(parsed);
-      } catch {
-        window.localStorage.removeItem(STORAGE_KEY);
       }
       setHydrated(true);
-      return;
     }
 
-    const legacyStored = window.localStorage.getItem(LEGACY_STORAGE_KEY);
-    if (legacyStored) {
-      try {
-        const legacyState = JSON.parse(legacyStored) as FinanceState;
-        const existingIds = new Set(legacyState.entries.map((entry) => entry.id));
-        const nubankSeedEntries = initialFinanceState.entries.filter((entry) => entry.account?.toLowerCase() === "nubank");
-        const migratedState: FinanceState = {
-          ...legacyState,
-          updatedAt: initialFinanceState.updatedAt,
-          entries: [...legacyState.entries, ...nubankSeedEntries.filter((entry) => !existingIds.has(entry.id))],
-        };
-        setState(migratedState);
-      } catch {
-        window.localStorage.removeItem(LEGACY_STORAGE_KEY);
-      }
-    }
-    setHydrated(true);
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
-    if (hydrated) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state, hydrated]);
+    if (!hydrated) return;
+    async function persist() {
+      setSyncStatus("syncing");
+      try {
+        if (user) {
+          const repo = new SupabaseFinanceRepository(user.id);
+          await repo.saveState(state);
+        } else {
+          const repo = new LocalStorageRepository();
+          await repo.saveState(state);
+        }
+        setSyncStatus("synced");
+      } catch (err) {
+        console.error("Sync error:", err);
+        setSyncStatus("pending");
+      }
+    }
+    persist();
+  }, [state, hydrated, user]);
 
   // Track connection status
   useEffect(() => {
@@ -621,6 +638,46 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
           <button className="mobile-menu" aria-label="Abrir menu" onClick={() => setMobileNavOpen(true)}><Menu /></button>
           <div className="page-heading"><span>Dashboard pessoal</span><h1>{title}</h1></div>
           <div className="topbar-actions">
+            {/* Supabase Connection State and Auth */}
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginRight: "12px" }}>
+              {user ? (
+                <>
+                  <div 
+                    style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)", color: "var(--success)", padding: "6px 12px", borderRadius: "var(--r-sm)" }}
+                    title={`Conectado como ${user.email}`}
+                  >
+                    {syncStatus === "syncing" ? (
+                      <RefreshCw size={14} className="spin" />
+                    ) : syncStatus === "pending" ? (
+                      <CloudLightning size={14} style={{ color: "var(--warning)" }} />
+                    ) : (
+                      <Cloud size={14} />
+                    )}
+                    <span style={{ fontWeight: 600 }}>Nuvem ativa</span>
+                  </div>
+                  <button 
+                    className="secondary-button compact" 
+                    title="Desconectar da conta"
+                    style={{ height: "32px", padding: "0 10px" }}
+                    onClick={async () => {
+                      await supabase.auth.signOut();
+                    }}
+                  >
+                    <LogOut size={14} />
+                  </button>
+                </>
+              ) : (
+                <button 
+                  className="secondary-button compact" 
+                  style={{ display: "flex", alignItems: "center", gap: "6px", height: "32px", padding: "0 12px" }}
+                  onClick={() => setAuthOpen(true)}
+                >
+                  <CloudOff size={14} />
+                  <span>Conectar nuvem</span>
+                </button>
+              )}
+            </div>
+
             <select
               value={selectedPeriod}
               onChange={(event) => setSelectedPeriod(event.target.value)}
@@ -746,6 +803,19 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
           state={state}
           selectedPeriod={selectedPeriod}
           onClose={() => setCalculationMemoryMetric(null)}
+        />
+      )}
+      {authOpen && (
+        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setAuthOpen(false); }}>
+          <AuthPage onAuthSuccess={() => setAuthOpen(false)} />
+        </div>
+      )}
+      {showMigrationWizard && user && (
+        <MigrationWizard
+          localState={state}
+          userId={user.id}
+          onComplete={() => { setShowMigrationWizard(false); setHydrated(true); }}
+          onClose={() => setShowMigrationWizard(false)}
         />
       )}
       {connectionStatus === "offline" && <div className="offline-banner" role="alert">Você está offline. As alterações são salvas localmente.</div>}

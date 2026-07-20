@@ -2,9 +2,9 @@ import type { FinanceState } from "../types";
 import type { BackupMeta } from "../backup";
 
 export interface FinanceRepository {
-  loadState(): FinanceState;
-  saveState(state: FinanceState): void;
-  createBackup(state: FinanceState, label?: string): BackupMeta;
-  restoreBackup(backupId: string): FinanceState | null;
-  loadBackupList(): BackupMeta[];
+  loadState(): Promise<FinanceState>;
+  saveState(state: FinanceState): Promise<void>;
+  createBackup(state: FinanceState, label?: string): Promise<BackupMeta>;
+  restoreBackup(backupId: string): Promise<FinanceState | null>;
+  loadBackupList(): Promise<BackupMeta[]>;
 }
