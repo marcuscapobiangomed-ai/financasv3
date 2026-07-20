@@ -2,3 +2,7 @@
 node_modules/
 
 .vercel
+
+# Variáveis de ambiente — NUNCA commitar
+.env.local
+.env*.local
