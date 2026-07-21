@@ -905,7 +905,19 @@ a:hover { text-decoration: underline; }
 .simulation-result strong { font-size: 20px; }
 .simulation-result span { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
 .goal-input { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
-.goal-input input { width: 100px; }
+.goal-input span { font-size: 12px; color: var(--muted); font-weight: 500; }
+.goal-input input {
+  width: 100px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.goal-input input:focus { border-color: var(--accent); }
 
 /* ─── TOOLTIP ─── */
 .tooltip-wrap { display: inline-flex; }

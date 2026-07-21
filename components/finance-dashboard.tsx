@@ -355,7 +355,7 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
     const urlPeriod = params.get("period");
     const urlSearch = params.get("search");
 
-    if (urlView && ["overview", "receivables", "cards", "spending", "goal", "imports", "tools", "logs", "quality", "corrections"].includes(urlView)) {
+    if (urlView && (["overview", "receivables", "cards", "spending", "goal", "imports", "tools", "logs", "quality", "corrections", "recovery_diagnostics", "all_entries", "calculation_audit"] as string[]).includes(urlView)) {
       setView(urlView);
     }
     if (urlPeriod) {
@@ -1098,6 +1098,7 @@ function Overview({
               </AreaChart>
             </ResponsiveContainer>
           </div>
+          <div style={{ display: "flex", gap: "16px", padding: "4px 16px 0", fontSize: "12px", color: "var(--muted)", flexWrap: "wrap" }}><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><span style={{ width: "12px", height: "3px", background: "#ff7a18", borderRadius: "2px", display: "inline-block" }} />Entradas</span><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><span style={{ width: "12px", height: "3px", background: "#d0d3d8", borderRadius: "2px", display: "inline-block" }} />Compromissos</span></div>
           <div className="chart-note"><TrendingUp size={16} /><span>A projeção usa somente dados cadastrados. Nubank e Unicred já foram importados a partir dos lançamentos visíveis.</span></div>
         </article>
 
@@ -1260,7 +1261,7 @@ function Receivables({ entries, settleEntry, removeEntry, onEdit, today, onAddEn
 function CardsPage({ entries, commitments }: { entries: FinanceEntry[]; commitments: Array<{ month: string; value: number }> }) {
   const installments = entries.filter((entry) => entry.installment);
   const remaining = installments.filter((entry) => entry.status !== "realizado").reduce((sum, entry) => sum + entry.amount, 0);
-  const macbook = entries.filter((entry) => entry.title === "MacBook").reduce((sum, entry) => sum + entry.amount, 0);
+  const macbook = entries.filter((entry) => entry.title === "MacBook" && entry.status !== "realizado").reduce((sum, entry) => sum + entry.amount, 0);
   const unicredEntries = entries.filter((entry) => entry.account?.toLowerCase() === "unicred");
   const nubankEntries = entries.filter((entry) => entry.account?.toLowerCase() === "nubank");
   const unicredOpen = unicredEntries.filter((entry) => entry.dueDate === "2026-08-11").reduce((sum, entry) => sum + entry.amount, 0);
@@ -1298,7 +1299,7 @@ function CardsPage({ entries, commitments }: { entries: FinanceEntry[]; commitme
         <StatCard 
           title="MacBook restante" 
           value={brl.format(macbook)} 
-          subtitle="6 parcelas de R$ 250" 
+          subtitle={macbook > 0 ? `${entries.filter((e) => e.title === "MacBook" && e.status !== "realizado").length} parcelas restantes` : "Quitado"} 
           icon={CreditCard} 
           tooltip="Saldo devedor restante estimado para a compra do MacBook."
         />
@@ -1406,8 +1407,35 @@ function SpendingPage({ entries, categorySpend, settleEntry, removeEntry, onEdit
 function GoalPage({ state, summary, goalGap, cashflow, setState, today }: { state: FinanceState; summary: ReturnType<typeof getSummary>; goalGap: number; cashflow: ReturnType<typeof monthSeries>; setState: React.Dispatch<React.SetStateAction<FinanceState>>; today: string }) {
   const [monthlySaving, setMonthlySaving] = useState(500);
   const months = monthlySaving > 0 ? Math.ceil(goalGap / monthlySaving) : 0;
-  const accumulated = cashflow.reduce((running, row) => { const previous = running.length ? running[running.length - 1].value : summary.patrimony; return [...running, { month: row.month, value: Math.max(0, previous + row.net) }]; }, [] as Array<{ month: string; value: number }>);
   const scenarios = getGoalScenarios(state, today);
+
+  function buildScenarioData(rate: number) {
+    const rows: Array<{ month: string; value: number }> = [];
+    let running = summary.patrimony;
+    const [year, month] = today.split("-").map(Number);
+    for (let i = 0; i < 24 && running < state.goal; i++) {
+      const d = new Date(year, month - 1 + i, 1);
+      const label = new Intl.DateTimeFormat("pt-BR", { month: "short", year: "2-digit" }).format(d);
+      running = Math.min(state.goal, running + rate);
+      rows.push({ month: label, value: running });
+    }
+    return rows;
+  }
+
+  const consData = buildScenarioData(scenarios[0]?.savingsRate ?? 100);
+  const probData = buildScenarioData(scenarios[1]?.savingsRate ?? 250);
+  const otimData = buildScenarioData(scenarios[2]?.savingsRate ?? 400);
+
+  const maxMonths = Math.max(consData.length, probData.length, otimData.length);
+  const chartData: Array<{ month: string; conservador?: number; provavel?: number; otimista?: number }> = [];
+  for (let i = 0; i < maxMonths; i++) {
+    chartData.push({
+      month: consData[i]?.month || probData[i]?.month || otimData[i]?.month || "",
+      conservador: consData[i]?.value,
+      provavel: probData[i]?.value,
+      otimista: otimData[i]?.value,
+    });
+  }
 
   return (
     <>
@@ -1430,8 +1458,9 @@ function GoalPage({ state, summary, goalGap, cashflow, setState, today }: { stat
       <section className="dashboard-grid dashboard-grid-primary">
         <article className="panel panel-wide">
           <div className="panel-heading"><div><span>Trajetória</span><h3>Projeção por cenário até R$ {(state.goal / 1000).toFixed(0)}k</h3></div><span className="soft-badge">3 cenários</span></div>
-          <div className="chart-wrap chart-large"><ResponsiveContainer width="100%" height="100%"><LineChart data={accumulated} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}><defs><linearGradient id="goalGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.3}/><stop offset="95%" stopColor="#f97316" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="#1c1f27" vertical={false}/><XAxis dataKey="month" stroke="#5a5f6d" tickLine={false} axisLine={false} tick={{ fontSize: 11 }}/><YAxis stroke="#5a5f6d" tickLine={false} axisLine={false} tickFormatter={(v) => `R$${v}`} tick={{ fontSize: 11 }}/><Tooltip content={<ChartTooltip />} /><Line type="monotone" dataKey="value" name="Projetado (atual)" stroke="#f97316" strokeWidth={2.5} dot={false} /></LineChart></ResponsiveContainer></div>
-          <div className="chart-note"><TrendingUp size={15} /><span>Projeção baseada nos dados cadastrados. Adicione aportes mensais no simulador ao lado para ajustar o prazo.</span></div>
+          <div className="chart-wrap chart-large"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}><defs><linearGradient id="goalGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.3}/><stop offset="95%" stopColor="#f97316" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="#1c1f27" vertical={false}/><XAxis dataKey="month" stroke="#5a5f6d" tickLine={false} axisLine={false} tick={{ fontSize: 11 }}/><YAxis stroke="#5a5f6d" tickLine={false} axisLine={false} tickFormatter={(v) => `R$${v}`} tick={{ fontSize: 11 }}/><Tooltip content={<ChartTooltip />} /><Line type="monotone" dataKey="otimista" name="Otimista" stroke="#22c55e" strokeWidth={2} dot={false} strokeDasharray="6 3" connectNulls /><Line type="monotone" dataKey="provavel" name="Provável" stroke="#f97316" strokeWidth={2.5} dot={false} connectNulls /><Line type="monotone" dataKey="conservador" name="Conservador" stroke="#ef4444" strokeWidth={2} dot={false} strokeDasharray="3 3" connectNulls /></LineChart></ResponsiveContainer></div>
+          <div style={{ display: "flex", gap: "16px", padding: "8px 16px", fontSize: "12px", color: "var(--muted)", flexWrap: "wrap" }}><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><span style={{ width: "12px", height: "3px", background: "#ef4444", borderRadius: "2px", display: "inline-block" }} />Conservador</span><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><span style={{ width: "12px", height: "3px", background: "#f97316", borderRadius: "2px", display: "inline-block" }} />Provável</span><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><span style={{ width: "12px", height: "3px", background: "#22c55e", borderRadius: "2px", display: "inline-block" }} />Otimista</span></div>
+          <div className="chart-note"><TrendingUp size={15} /><span>Cada cenário usa uma premissa de aporte mensal diferente. Use o simulador ao lado para ajustar o prazo.</span></div>
         </article>
         <article className="panel simulator-panel">
           <div className="panel-heading"><div><span>Simulador</span><h3>Quanto guardar por mês?</h3></div></div>
@@ -2022,7 +2051,7 @@ function QualityPage({ state, selectedPeriod, pushToast }: { state: FinanceState
           <span className="eyebrow"><Gauge size={16} /> Qualidade do produto</span>
           <h2 style={{ fontSize: "16px", fontWeight: 600, marginTop: "4px" }}>Métricas de uso e validação</h2>
           <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "4px" }}>
-            {stats.last30d} eventos nos últimos 30 dias · {stats.taskCompletionRate * 100}% conclusão · {stats.errorCount} erros
+            {stats.last30d} eventos de uso nos últimos 30 dias · {stats.taskCompletionRate * 100}% conclusão · {stats.errorCount} erros
           </p>
         </div>
         <button className="secondary-button" style={{ fontSize: "11px", padding: "4px 10px" }} onClick={refresh}>Atualizar</button>
@@ -2124,10 +2153,12 @@ function QualityPage({ state, selectedPeriod, pushToast }: { state: FinanceState
           <div className="panel-heading"><div><span>Navegação</span><h3>Páginas mais visitadas</h3></div></div>
           <div className="rank-list">
             {stats.pageViews.length === 0 ? (
-              <div className="empty-state"><span>Navegue pelo aplicativo para ver as estatísticas.</span></div>
-            ) : stats.pageViews.map(([key, count], i) => (
-              <div key={key}><span><i>{i + 1}</i>{key.replace("page:", "")}</span><strong>{count} visitas</strong></div>
-            ))}
+              <div className="empty-state"><span>Navegue pelas páginas do app para gerar dados de uso.</span></div>
+            ) : stats.pageViews.map(([key, count], i) => {
+              const viewLabelMap: Record<string, string> = { overview: "Visão geral", spending: "Gastos", receivables: "A receber", cards: "Cartões e parcelas", goal: "Meta", imports: "Importar", tools: "Exportar e backup", logs: "Monitoramento", quality: "Qualidade", corrections: "Central Correções", calculation_audit: "Auditoria de Cálculos", recovery_diagnostics: "Diagnósticos", all_entries: "Todos lançamentos" };
+              const cleanKey = key.replace("page:", "");
+              return <div key={key}><span><i>{i + 1}</i>{viewLabelMap[cleanKey] ?? cleanKey}</span><strong>{count} visitas</strong></div>;
+            })}
           </div>
         </article>
       </section>

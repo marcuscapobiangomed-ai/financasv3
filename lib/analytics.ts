@@ -102,7 +102,7 @@ export const analytics = {
       })(),
       taskCompletionRate: (() => {
         const tasks = last30d.filter((e) => e.type === "task");
-        if (!tasks.length) return 1;
+        if (!tasks.length) return 0;
         const succeeded = tasks.filter((e) => e.metadata?.success !== false).length;
         return succeeded / tasks.length;
       })(),

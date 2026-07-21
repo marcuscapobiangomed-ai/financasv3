@@ -32,7 +32,7 @@ export function LogViewerPage() {
           <span className="eyebrow"><ListTodo size={16} /> Observabilidade</span>
           <h2 style={{ fontSize: "16px", fontWeight: 600, marginTop: "4px" }}>Monitoramento e logs do sistema</h2>
           <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "4px" }}>
-            {stats.total} eventos registrados · {stats.errors} erros · últimas 24h: {stats.last24h}
+            {stats.total} logs do sistema · {stats.errors} erros · últimas 24h: {stats.last24h}
           </p>
         </div>
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -61,7 +61,11 @@ export function LogViewerPage() {
           </div>
           <div className="log-viewer" style={{ maxHeight: "500px", overflowY: "auto" }}>
             {filtered.length === 0 ? (
-              <div className="empty-state"><span>Nenhum log encontrado.</span></div>
+              <div className="empty-state">
+                <ListTodo size={28} />
+                <strong>Nenhum log registrado</strong>
+                <span>Os logs do sistema são gerados automaticamente ao realizar ações como importar, exportar ou fechar o mês.</span>
+              </div>
             ) : (
               filtered.slice().reverse().map((entry) => (
                 <div key={entry.id} className="log-entry">
