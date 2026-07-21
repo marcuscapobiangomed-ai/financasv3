@@ -1,4 +1,5 @@
 import type { FinanceEntry, FinanceState } from "./types";
+import { buildInvoiceView } from "./invoice";
 
 export type IntegrityIssue = {
   id?: string;
@@ -101,6 +102,7 @@ export function validateDataIntegrity(state: FinanceState): IntegrityIssue[] {
     const titleLower = e.title.toLowerCase();
     if (
       (titleLower.includes("pagamento de fatura") || titleLower.includes("pagamento fatura") || titleLower.includes("fatura pago")) &&
+      e.transactionType !== "invoice_payment" &&
       e.kind === "expense" &&
       e.paidBy !== "father"
     ) {
@@ -114,50 +116,92 @@ export function validateDataIntegrity(state: FinanceState): IntegrityIssue[] {
     }
   });
 
-  // 3. Fatura subtotal checks for August 2026 (the recovered target period)
-  const unicredAugustSubtotal = entries
-    .filter((e) => e.account?.toLowerCase() === "unicred" && e.invoiceMonth === "2026-08")
-    .reduce((sum, e) => sum + e.amount, 0);
-
-  const expectedUnicredAugust = 801.85;
-  if (unicredAugustSubtotal > 0 && Math.abs(unicredAugustSubtotal - expectedUnicredAugust) > 0.01) {
-    issues.push({
-      type: "warning",
-      code: "INVOICE_SUBTOTAL_MISMATCH_UNICRED",
-      message: `O subtotal identificado na fatura Unicred de Agosto (${unicredAugustSubtotal.toFixed(2)}) difere do valor esperado dos prints (${expectedUnicredAugust.toFixed(2)}).`,
-    });
-  }
-
-  const nubankAugustSubtotal = entries
-    .filter((e) => e.account?.toLowerCase() === "nubank" && e.invoiceMonth === "2026-08")
-    .reduce((sum, e) => sum + e.amount, 0);
-
-  const expectedNubankAugust = 192.40;
-  if (nubankAugustSubtotal > 0 && Math.abs(nubankAugustSubtotal - expectedNubankAugust) > 0.01) {
-    issues.push({
-      type: "warning",
-      code: "INVOICE_SUBTOTAL_MISMATCH_NUBANK",
-      message: `O subtotal identificado na fatura Nubank de Agosto (${nubankAugustSubtotal.toFixed(2)}) difere do valor esperado dos prints (${expectedNubankAugust.toFixed(2)}).`,
-    });
-  }
-
-  // 4. General Invoice Official Total Reconciliations
+  // 3. Invoice Entity vs Computed Subtotal Reconciliation
   if (Array.isArray(state.invoices)) {
     state.invoices.forEach((inv) => {
       const subtotal = entries
-        .filter((e) => e.account?.toLowerCase() === inv.cardId.toLowerCase() && e.invoiceMonth === inv.referenceMonth)
+        .filter((e) => e.account?.toLowerCase() === inv.cardId.toLowerCase() && e.invoiceMonth === inv.referenceMonth && e.transactionType !== "invoice_payment")
         .reduce((sum, e) => sum + e.amount, 0);
 
-      if (inv.officialTotal !== undefined && Math.abs(subtotal - inv.officialTotal) > 0.01) {
+      // Check: computed subtotal vs invoice entity identifiedSubtotal
+      if (Math.abs(subtotal - inv.identifiedSubtotal) > 0.01) {
         issues.push({
           type: "warning",
-          code: `INVOICE_RECONCILIATION_MISMATCH_${inv.cardId.toUpperCase()}_${inv.referenceMonth.replace("-", "_")}`,
+          code: `INVOICE_SUBTOTAL_MISMATCH_${inv.cardId.toUpperCase()}_${inv.referenceMonth.replace("-", "_")}`,
+          message: `Divergência na fatura ${inv.cardId} (${inv.referenceMonth}): a soma das compras (R$ ${subtotal.toFixed(2)}) difere do identifiedSubtotal cadastrado (R$ ${inv.identifiedSubtotal.toFixed(2)}).`,
+          details: `Diferença de R$ ${(subtotal - inv.identifiedSubtotal).toFixed(2)}. Verifique se há compras faltando, duplicadas, ou se identifiedSubtotal precisa ser atualizado.`,
+        });
+      }
+
+      // Check: if officialTotal is defined, compare against computed subtotal
+      if (inv.officialTotal !== undefined && inv.officialTotal > 0 && Math.abs(subtotal - inv.officialTotal) > 0.01) {
+        issues.push({
+          type: "warning",
+          code: `INVOICE_OFFICIAL_MISMATCH_${inv.cardId.toUpperCase()}_${inv.referenceMonth.replace("-", "_")}`,
           message: `Divergência na fatura ${inv.cardId} (${inv.referenceMonth}): o subtotal identificado (R$ ${subtotal.toFixed(2)}) difere do total oficial cadastrado (R$ ${inv.officialTotal.toFixed(2)}).`,
-          details: `Diferença de R$ ${(subtotal - inv.officialTotal).toFixed(2)}. Verifique se há compras faltando ou duplicadas nesta fatura.`,
+          details: `Diferença de R$ ${(subtotal - inv.officialTotal).toFixed(2)}. O total oficial veio de documento externo; a diferença precisa ser investigada.`,
         });
       }
     });
   }
 
+  // 5. Cross-page consistency: Invoice Entity vs buildInvoiceView
+  if (Array.isArray(state.invoices)) {
+    state.invoices.forEach((inv) => {
+      const view = buildInvoiceView(state, inv.cardId as "Nubank" | "Unicred", inv.referenceMonth);
+      if (inv.identifiedSubtotal !== undefined && Math.abs(view.identifiedSubtotal - inv.identifiedSubtotal) > 0.01) {
+        issues.push({
+          type: "error",
+          code: `INVOICE_ENTITY_VIEW_MISMATCH_${inv.cardId.toUpperCase()}_${inv.referenceMonth.replace("-", "_")}`,
+          message: `Inconsistência entre entity e view para ${inv.cardId} (${inv.referenceMonth}): Entity=${R(inv.identifiedSubtotal)} vs View=${R(view.identifiedSubtotal)}.`,
+          details: `A entidade de fatura persistida não reflete os lançamentos atuais. Isso pode causar divergência entre a Visão Geral e a página de Cartões.`,
+        });
+      }
+    });
+  }
+
+  // 6. Card entries without invoiceMonth
+  entries.forEach((e) => {
+    const isCard = e.account?.toLowerCase() === "unicred" || e.account?.toLowerCase() === "nubank";
+    if (isCard && !e.invoiceMonth) {
+      issues.push({
+        id: e.id,
+        type: "warning",
+        code: "CARD_ENTRY_NO_INVOICE_MONTH",
+        message: `Lançamento de cartão "${e.title}" não possui invoiceMonth associado.`,
+        details: "Lançamentos de cartão devem ter um mês de fatura para aparecerem na página de Cartões e parcelas.",
+        entry: e,
+      });
+    }
+  });
+
+  // 7. Check for empty invoices with existing card entries
+  const currentMonth = entries[0]?.dueDate?.slice(0, 7) || "";
+  if (currentMonth) {
+    const unicredView = buildInvoiceView(state, "Unicred", currentMonth);
+    const nubankView = buildInvoiceView(state, "Nubank", currentMonth);
+    
+    if (unicredView.identifiedSubtotal === 0 && entries.some((e) => e.account?.toLowerCase() === "unicred")) {
+      issues.push({
+        type: "warning",
+        code: "UNICRED_EMPTY_INVOICE_WITH_ENTRIES",
+        message: `Existem lançamentos Unicred na base, mas a fatura de ${currentMonth} está vazia.`,
+        details: "Verifique se os lançamentos possuem invoiceMonth correto para este período.",
+      });
+    }
+    if (nubankView.identifiedSubtotal === 0 && entries.some((e) => e.account?.toLowerCase() === "nubank")) {
+      issues.push({
+        type: "warning",
+        code: "NUBANK_EMPTY_INVOICE_WITH_ENTRIES",
+        message: `Existem lançamentos Nubank na base, mas a fatura de ${currentMonth} está vazia.`,
+        details: "Verifique se os lançamentos possuem invoiceMonth correto para este período.",
+      });
+    }
+  }
+
   return issues;
+}
+
+function R(value: number): string {
+  return `R$ ${value.toFixed(2)}`;
 }

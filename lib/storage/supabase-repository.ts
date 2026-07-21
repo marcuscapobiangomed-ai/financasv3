@@ -76,6 +76,11 @@ export class SupabaseFinanceRepository implements FinanceRepository {
       isOfficial: t.is_official,
       note: t.note || undefined,
       invoiceMonth: t.invoice_month || undefined,
+      invoiceId: t.invoice_id || undefined,
+      transactionType: t.transaction_type as any || undefined,
+      installmentNumber: t.installment_number != null ? Number(t.installment_number) : undefined,
+      installmentTotal: t.installment_total != null ? Number(t.installment_total) : undefined,
+      includeInSpending: t.include_in_spending !== false,
       installment: t.installment || undefined,
     }));
 
@@ -161,6 +166,11 @@ export class SupabaseFinanceRepository implements FinanceRepository {
         is_official: e.isOfficial,
         note: e.note || null,
         invoice_month: e.invoiceMonth || null,
+        invoice_id: e.invoiceId || null,
+        transaction_type: e.transactionType || null,
+        installment_number: e.installmentNumber ?? null,
+        installment_total: e.installmentTotal ?? null,
+        include_in_spending: e.includeInSpending !== false,
         installment: e.installment || null,
         updated_at: now,
       }));

@@ -19,6 +19,13 @@ export type EntryOrigin =
 
 export type DataQuality = "completo" | "parcial" | "estimado";
 
+export type TransactionType =
+  | "purchase"
+  | "iof"
+  | "fee"
+  | "refund"
+  | "invoice_payment";
+
 export type Account = {
   id: string;
   name: string;
@@ -45,6 +52,11 @@ export type FinanceEntry = {
   note?: string;
   purchaseDate?: string;
   invoiceMonth?: string;
+  invoiceId?: string;
+  transactionType?: TransactionType;
+  installmentNumber?: number;
+  installmentTotal?: number;
+  includeInSpending?: boolean;
   paymentDate?: string;
   dataQuality?: DataQuality;
   isOfficial?: boolean;

@@ -1,4 +1,4 @@
-import type { FinanceEntry, FinanceState } from "./types";
+import type { FinanceEntry, FinanceState, TransactionType } from "./types";
 
 function parsePurchaseDate(note?: string, dueDate?: string): string {
   if (note) {
@@ -10,15 +10,42 @@ function parsePurchaseDate(note?: string, dueDate?: string): string {
   return dueDate || "";
 }
 
-function mapCardEntries(entries: any[], accountName: string): FinanceEntry[] {
+function parseInstallment(installment?: string): { installmentNumber?: number; installmentTotal?: number } {
+  if (!installment) return {};
+  const clean = installment.replace("?", "").trim();
+  const match = clean.match(/^(\d+)\/(\d+)$/);
+  if (match) {
+    return {
+      installmentNumber: parseInt(match[1], 10),
+      installmentTotal: parseInt(match[2], 10),
+    };
+  }
+  return {};
+}
+
+function inferTransactionType(entry: any): TransactionType {
+  const title = (entry.title || "").toLowerCase();
+  if (title.startsWith("iof")) return "iof";
+  if (title.includes("anuidade")) return "fee";
+  return "purchase";
+}
+
+function mapCardEntries(entries: any[], accountName: string, invoiceId: string): FinanceEntry[] {
   return entries.map((entry) => {
     const purchaseDate = parsePurchaseDate(entry.note, entry.dueDate);
     const isFuture = entry.dueDate > (accountName === "Unicred" ? "2026-08-11" : "2026-08-10");
+    const inst = parseInstallment(entry.installment);
+    const isCurrentInvoice = !isFuture;
     return {
       ...entry,
       account: accountName,
       purchaseDate,
-      invoiceMonth: entry.dueDate.slice(0, 7),
+      invoiceMonth: isCurrentInvoice ? "2026-08" : entry.dueDate.slice(0, 7),
+      invoiceId: isCurrentInvoice ? invoiceId : undefined,
+      transactionType: inferTransactionType(entry),
+      installmentNumber: inst.installmentNumber,
+      installmentTotal: inst.installmentTotal,
+      includeInSpending: true,
       dataQuality: isFuture ? "estimado" : "parcial",
       isOfficial: false,
       status: isFuture ? "projetado" : "a_pagar",
@@ -137,7 +164,7 @@ const nubankEntries: any[] = [
 ];
 
 export const initialFinanceState: FinanceState = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   goal: 10000,
   updatedAt: "2026-07-18T23:07:00-03:00",
   invoices: [
@@ -145,23 +172,23 @@ export const initialFinanceState: FinanceState = {
       id: "invoice-unicred-2026-08",
       cardId: "Unicred",
       referenceMonth: "2026-08",
-      closingDate: "2026-08-03",
+      closingDate: "2026-08-01",
       dueDate: "2026-08-11",
-      officialTotal: 801.85,
+      officialTotal: undefined,
       identifiedSubtotal: 801.85,
-      status: "closed",
-      dataQuality: "completo",
+      status: "partial",
+      dataQuality: "parcial",
     },
     {
       id: "invoice-nubank-2026-08",
       cardId: "Nubank",
       referenceMonth: "2026-08",
-      closingDate: "2026-08-03",
+      closingDate: "2026-07-31",
       dueDate: "2026-08-10",
-      officialTotal: 192.40,
+      officialTotal: undefined,
       identifiedSubtotal: 192.40,
-      status: "closed",
-      dataQuality: "completo",
+      status: "partial",
+      dataQuality: "parcial",
     },
   ],
   accounts: [
@@ -183,8 +210,8 @@ export const initialFinanceState: FinanceState = {
     },
   ],
   entries: [
-    ...mapCardEntries(unicredEntries, "Unicred"),
-    ...mapCardEntries(nubankEntries, "Nubank"),
+    ...mapCardEntries(unicredEntries, "Unicred", "invoice-unicred-2026-08"),
+    ...mapCardEntries(nubankEntries, "Nubank", "invoice-nubank-2026-08"),
     ...mapOtherEntries([
       { id: "clara-2026-07", title: "Clara", amount: 50, kind: "income", dueDate: "2026-07-21", status: "pending", category: "Presentes", source: "Clara" },
       { id: "luandder-2026-07", title: "Luandder", amount: 283, kind: "income", dueDate: "2026-07-25", status: "pending", category: "Freelancer", source: "Luandder", recurring: true, installment: "1/2" },
@@ -234,7 +261,8 @@ export const initialFinanceState: FinanceState = {
       { id: "medcel-2027-08", title: "Curso Medcel", amount: 255, kind: "expense", dueDate: "2027-08-31", status: "planned", category: "Educação", paidBy: "me", recurring: true, installment: "9/12", estimatedDate: true },
       { id: "medcel-2027-09", title: "Curso Medcel", amount: 255, kind: "expense", dueDate: "2027-09-30", status: "planned", category: "Educação", paidBy: "me", recurring: true, installment: "10/12", estimatedDate: true },
       { id: "medcel-2027-10", title: "Curso Medcel", amount: 255, kind: "expense", dueDate: "2027-10-31", status: "planned", category: "Educação", paidBy: "me", recurring: true, installment: "11/12", estimatedDate: true },
-      { id: "medcel-2027-11", title: "Curso Medcel", amount: 255, kind: "expense", dueDate: "2027-11-30", status: "planned", category: "Educação", paidBy: "me", recurring: true, installment: "12/12", estimatedDate: true }
+      { id: "medcel-2027-11", title: "Curso Medcel", amount: 255, kind: "expense", dueDate: "2027-11-30", status: "planned", category: "Educação", paidBy: "me", recurring: true, installment: "12/12", estimatedDate: true },
+      { id: "nubank-payment-2026-07-10", title: "Pagamento recebido — Nubank", amount: 482.12, kind: "income", dueDate: "2026-07-10", status: "recebido", category: "Fatura", paidBy: "me", transactionType: "invoice_payment", includeInSpending: false, dataQuality: "completo", isOfficial: true, origin: "seed", note: "Pagamento recebido na fatura Nubank. Não é gasto — deve ser armazenado como pagamento de fatura, separado das compras." }
     ])
   ],
 };

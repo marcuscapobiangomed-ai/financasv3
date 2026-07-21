@@ -35,6 +35,10 @@ export function ToolsPage({
     refreshBackups();
   }, [refreshBackups]);
 
+  const hasAutoBackup = backups.some((b) => b.label.startsWith("Backup automático"));
+  const lastAutoBackup = backups.filter((b) => b.label.startsWith("Backup automático")).pop();
+  const manualBackups = backups.filter((b) => !b.label.startsWith("Backup automático"));
+
   const handleExport = useCallback(
     (format: "csv" | "json" | "full") => {
       const start = performance.now();
@@ -112,7 +116,10 @@ export function ToolsPage({
       <section className="dashboard-grid" style={{ gridTemplateColumns: "1fr", marginTop: "24px" }}>
         <article className="panel panel-wide">
           <div className="panel-heading">
-            <div><span>Backups automáticos</span><h3>Últimos backups salvos (máx 50)</h3></div>
+            <div>
+            <span>Backups automáticos</span>
+            <h3>Últimos backups salvos (máx 50)</h3>
+          </div>
             <button
               className="primary-button compact"
               onClick={() => {
@@ -123,14 +130,23 @@ export function ToolsPage({
               <Save size={15} />Criar backup agora
             </button>
           </div>
-          {backups.length === 0 ? (
+          {lastAutoBackup && (
+            <div className="privacy-note" style={{ borderTop: "none", paddingTop: 0, borderBottom: "1px solid var(--border)", paddingBottom: 0 }}>
+              <Save size={18} />
+              <div>
+                <strong>Último backup automático</strong>
+                <span style={{ fontSize: "13px" }}>{new Date(lastAutoBackup.timestamp).toLocaleString("pt-BR")} · {lastAutoBackup.entryCount} lançamentos</span>
+              </div>
+            </div>
+          )}
+          {manualBackups.length === 0 ? (
             <div className="empty-state">
               <span>Nenhum backup manual</span>
               <p>Backups automáticos são criados a cada 5 minutos. Clique em 'Criar backup agora' para o primeiro.</p>
             </div>
           ) : (
             <div className="backup-list">
-              {backups.slice().reverse().map((backup) => (
+              {manualBackups.slice().reverse().map((backup) => (
                 <div key={backup.id} className="backup-item">
                   <div>
                     <strong>{backup.label}</strong>

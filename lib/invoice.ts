@@ -1,5 +1,4 @@
 import type { FinanceState, FinanceEntry, InvoiceView, DataQuality } from "./types";
-import { isEntryInPeriod } from "./finance";
 
 export function buildInvoiceView(
   state: FinanceState,
@@ -8,70 +7,37 @@ export function buildInvoiceView(
 ): InvoiceView {
   const cardName = card;
   const entries = state.entries.filter(
-    (e) => e.account?.toLowerCase() === cardName.toLowerCase() && e.invoiceMonth === month
+    (e) =>
+      e.account?.toLowerCase() === cardName.toLowerCase() &&
+      e.invoiceMonth === month &&
+      e.transactionType !== "invoice_payment"
   );
 
   const identifiedSubtotal = entries.reduce((sum, e) => sum + e.amount, 0);
 
-  // Buscar na entidade persistente no estado se existir
   const persistedInvoice = state.invoices?.find(
     (inv) => inv.cardId.toLowerCase() === cardName.toLowerCase() && inv.referenceMonth === month
   );
 
-  let officialTotal: number | undefined = persistedInvoice?.officialTotal;
-  let closingDate = persistedInvoice?.closingDate || `${month}-03`;
-  let dueDate = persistedInvoice?.dueDate || `${month}-10`;
+  const officialTotal = persistedInvoice?.officialTotal;
+  const closingDate = persistedInvoice?.closingDate || (cardName === "Unicred" ? `${month}-01` : `${month}-01`);
+  const dueDate = persistedInvoice?.dueDate || (cardName === "Unicred" ? `${month}-11` : `${month}-10`);
 
-  if (!persistedInvoice) {
-    // Totais oficiais para Agosto de 2026 de acordo com os prints
-    if (month === "2026-08") {
-      if (cardName === "Unicred") {
-        officialTotal = 801.85;
-        closingDate = "2026-08-03";
-        dueDate = "2026-08-11";
-      } else {
-        officialTotal = 192.40;
-        closingDate = "2026-08-03";
-        dueDate = "2026-08-10";
-      }
-    } else {
-      // defaults based on card
-      if (cardName === "Unicred") {
-        closingDate = `${month}-03`;
-        dueDate = `${month}-11`;
-      } else {
-        closingDate = `${month}-03`;
-        dueDate = `${month}-10`;
-      }
-    }
-  }
-
-  // Verificar lançamentos de pagamento desta fatura na base
+  // Verificar pagamentos desta fatura na base
   const paymentEntries = state.entries.filter(
     (e) =>
-      e.kind === "income" &&
-      e.title.toLowerCase().includes("pagamento") &&
-      e.title.toLowerCase().includes("fatura") &&
+      e.transactionType === "invoice_payment" &&
       (e.title.toLowerCase().includes(cardName.toLowerCase()) || e.account?.toLowerCase() === cardName.toLowerCase()) &&
-      isEntryInPeriod(e, month)
+      e.dueDate.slice(0, 7) === month
   );
   const paidAmount = paymentEntries.reduce((sum, e) => sum + e.amount, 0);
 
-  // Cálculo de status
-  const targetTotal = officialTotal || identifiedSubtotal;
-  let status: "open" | "closed" | "paid" | "partial" = "open";
-
-  if (paidAmount >= targetTotal && targetTotal > 0) {
-    status = "paid";
-  } else if (paidAmount > 0) {
-    status = "partial";
+  // Cálculo de status baseado na entidade persistida
+  let status: "open" | "closed" | "paid" | "partial";
+  if (persistedInvoice) {
+    status = persistedInvoice.status;
   } else {
-    const today = new Date().toLocaleDateString("sv-SE");
-    if (today > dueDate) {
-      status = "closed";
-    } else {
-      status = "open";
-    }
+    status = "open";
   }
 
   // Determinar qualidade de dados agregada da fatura
@@ -84,7 +50,7 @@ export function buildInvoiceView(
   }
 
   return {
-    id: `${cardName.toLowerCase()}-${month}`,
+    id: persistedInvoice?.id || `${cardName.toLowerCase()}-${month}`,
     card: cardName,
     month,
     closingDate,

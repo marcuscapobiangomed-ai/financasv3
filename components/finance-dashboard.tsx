@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import dynamic from "next/dynamic";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import { initialFinanceState } from "@/lib/seed";
 import { brl, commitmentsByMonth, formatDate, getSummary, monthSeries, parseCsv, spendingByCategory, isEntryInPeriod, monthLabel, getSafeToSpend, getRecommendations, getGoalScenarios, getFinancialHealth } from "@/lib/finance";
+import { buildInvoiceView } from "@/lib/invoice";
 import type { FinanceEntry, FinanceState, ViewKey, DataQuality, EntryStatus } from "@/lib/types";
 import type { Recommendation } from "@/lib/finance";
 import { PanelSkeleton, StatCardSkeleton, TableSkeleton, HeroSkeleton } from "@/components/skeleton";
@@ -71,6 +72,7 @@ import { SupabaseFinanceRepository } from "@/lib/storage/supabase-repository";
 import { LocalStorageRepository } from "@/lib/storage/local-storage-repository";
 import { AuthPage } from "@/components/AuthPage";
 import { MigrationWizard } from "@/components/MigrationWizard";
+import { runMigrations } from "@/lib/storage/migration-runner";
 
 const STORAGE_KEY = "meu-financeiro-v3";
 const LEGACY_STORAGE_KEY = "meu-financeiro-v2";
@@ -250,7 +252,8 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
         setUser(session.user);
         const repo = new SupabaseFinanceRepository(session.user.id);
         repo.loadState().then((remoteData) => {
-          setState(remoteData);
+          const migrated = runMigrations(remoteData);
+          setState(migrated);
           setHydrated(true);
         });
       } else {
@@ -287,15 +290,11 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
       if (stored) {
         try {
           const parsed = JSON.parse(stored) as FinanceState;
-          parsed.entries = parsed.entries.map((entry) => {
-            const isCard = entry.account === "Nubank" || entry.account === "Unicred";
-            return {
-              ...entry,
-              dataQuality: entry.dataQuality || (isCard ? (entry.status === "projetado" ? "estimado" : "parcial") : "completo"),
-              isOfficial: entry.isOfficial ?? !isCard,
-            };
-          });
-          setState(parsed);
+          const migrated = runMigrations(parsed);
+          if (migrated !== parsed) {
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+          }
+          setState(migrated);
         } catch {
           window.localStorage.removeItem(STORAGE_KEY);
         }
@@ -729,8 +728,8 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
             />
           )}
           {view === "receivables" && <Receivables entries={entriesFiltered.filter((entry) => entry.kind === "income")} settleEntry={settleEntry} removeEntry={removeEntry} onEdit={setEditingEntry} today={todayStr} onAddEntry={() => setEntryModalOpen(true)} updateEntry={updateEntry} setHistoryModalEntry={setHistoryModalEntry} />}
-          {view === "cards" && <CardsPage entries={entriesFiltered.filter((entry) => entry.kind === "expense")} commitments={commitments} />}
-          {view === "spending" && <SpendingPage entries={entriesFiltered.filter((entry) => entry.kind === "expense")} categorySpend={categorySpend} settleEntry={settleEntry} removeEntry={removeEntry} onEdit={setEditingEntry} today={todayStr} updateEntry={updateEntry} setHistoryModalEntry={setHistoryModalEntry} />}
+          {view === "cards" && <CardsPage entries={entriesFiltered.filter((entry) => entry.kind === "expense")} commitments={commitments} state={state} selectedPeriod={selectedPeriod} />}
+          {view === "spending" && <SpendingPage entries={entriesFiltered.filter((entry) => entry.kind === "expense")} categorySpend={categorySpend} settleEntry={settleEntry} removeEntry={removeEntry} onEdit={setEditingEntry} today={todayStr} updateEntry={updateEntry} setHistoryModalEntry={setHistoryModalEntry} state={state} selectedPeriod={selectedPeriod} />}
           {view === "goal" && <GoalPage state={state} summary={summary} goalGap={goalGap} cashflow={cashflow} setState={setState} today={todayStr} />}
           {view === "imports" && (
             <ImportPage
@@ -1013,10 +1012,13 @@ function Overview({
     .filter((entry) => entry.status !== "recebido" && entry.status !== "realizado" && isEntryInPeriod(entry, selectedPeriod))
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
     .slice(0, 6);
-  const hasUnicred = state.entries.some((entry) => entry.account?.toLowerCase() === "unicred");
-  const hasNubank = state.entries.some((entry) => entry.account?.toLowerCase() === "nubank");
-  const incomplete = !(hasUnicred && hasNubank);
-  const pendingCards = [!hasNubank && "Nubank", !hasUnicred && "Unicred"].filter(Boolean).join(" e ");
+
+  const unicredView = buildInvoiceView(state, "Unicred", selectedPeriod);
+  const nubankView = buildInvoiceView(state, "Nubank", selectedPeriod);
+  const hasUnicredData = unicredView.identifiedSubtotal > 0;
+  const hasNubankData = nubankView.identifiedSubtotal > 0;
+  const incomplete = !(hasUnicredData && hasNubankData);
+  const pendingCards = [!hasNubankData && "Nubank", !hasUnicredData && "Unicred"].filter(Boolean).join(" e ");
   return (
     <>
       <section className="decision-hero flex-col" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "16px", padding: "28px 32px" }}>
@@ -1039,7 +1041,9 @@ function Overview({
           </div>
         </div>
         <div style={{ fontSize: "12px", padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", width: "100%", color: "var(--text-2)" }}>
-          💡 <strong>Integrações:</strong> {incomplete ? `Falta importar faturas do ${pendingCards} para este período.` : "Nubank e Unicred totalmente importados e consolidados."}
+          💡 <strong>Integrações:</strong> {incomplete
+            ? `Lançamentos de cartão identificados para ${pendingCards}, mas subtotal pode estar incompleto. Verifique a página de Cartões.`
+            : `Unicred (${unicredView.entries.length} lançamentos, ${brl.format(unicredView.identifiedSubtotal)}) e Nubank (${nubankView.entries.length} lançamentos, ${brl.format(nubankView.identifiedSubtotal)}) identificados no período.`}
         </div>
       </section>
 
@@ -1258,31 +1262,54 @@ function Receivables({ entries, settleEntry, removeEntry, onEdit, today, onAddEn
   );
 }
 
-function CardsPage({ entries, commitments }: { entries: FinanceEntry[]; commitments: Array<{ month: string; value: number }> }) {
+function CardsPage({ entries, commitments, state, selectedPeriod }: { entries: FinanceEntry[]; commitments: Array<{ month: string; value: number }>; state: FinanceState; selectedPeriod: string }) {
+  const [showFutureBreakdown, setShowFutureBreakdown] = useState(false);
   const installments = entries.filter((entry) => entry.installment);
   const remaining = installments.filter((entry) => entry.status !== "realizado").reduce((sum, entry) => sum + entry.amount, 0);
   const macbook = entries.filter((entry) => entry.title === "MacBook" && entry.status !== "realizado").reduce((sum, entry) => sum + entry.amount, 0);
-  const unicredEntries = entries.filter((entry) => entry.account?.toLowerCase() === "unicred");
-  const nubankEntries = entries.filter((entry) => entry.account?.toLowerCase() === "nubank");
-  const unicredOpen = unicredEntries.filter((entry) => entry.dueDate === "2026-08-11").reduce((sum, entry) => sum + entry.amount, 0);
-  const nubankOpen = nubankEntries.filter((entry) => entry.dueDate === "2026-08-10").reduce((sum, entry) => sum + entry.amount, 0);
-  const cardsOpen = unicredOpen + nubankOpen;
-  const importedCount = Number(unicredEntries.length > 0) + Number(nubankEntries.length > 0);
+
+  const unicredView = buildInvoiceView(state, "Unicred", selectedPeriod);
+  const nubankView = buildInvoiceView(state, "Nubank", selectedPeriod);
+
+  const unicredPayment = state.entries.find((e) => e.transactionType === "invoice_payment" && e.account?.toLowerCase() === "unicred");
+  const nubankPayment = state.entries.find((e) => e.transactionType === "invoice_payment" && e.account?.toLowerCase() === "nubank");
+
+  const cardsOpen = unicredView.identifiedSubtotal + nubankView.identifiedSubtotal;
+
+  const allUnicredEntries = state.entries.filter((e) => e.account?.toLowerCase() === "unicred" && e.transactionType !== "invoice_payment");
+  const allNubankEntries = state.entries.filter((e) => e.account?.toLowerCase() === "nubank" && e.transactionType !== "invoice_payment");
+  const importedCount = Number(allUnicredEntries.length > 0) + Number(allNubankEntries.length > 0);
+
+  const unicredStatusLabel = unicredView.status === "paid" ? "Paga" : unicredView.status === "closed" ? "Fechada" : unicredView.status === "partial" ? "Parcial" : "Aberta";
+  const nubankStatusLabel = nubankView.status === "paid" ? "Paga" : nubankView.status === "closed" ? "Fechada" : nubankView.status === "partial" ? "Parcial" : "Aberta";
+
   return (
     <>
       <section className="decision-hero flex-col" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "16px", padding: "28px 32px" }}>
         <span className="eyebrow"><CreditCard size={16} /> Faturas e Parcelas</span>
         <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center", flexWrap: "wrap", gap: "20px" }}>
           <div style={{ flex: 1, minWidth: "280px" }}>
-            <h2 style={{ fontSize: "14px", fontWeight: 600, color: "var(--muted-2)", margin: 0 }}>Qual é o valor total de faturas em aberto?</h2>
+            <h2 style={{ fontSize: "14px", fontWeight: 600, color: "var(--muted-2)", margin: 0 }}>Subtotal identificado nas faturas</h2>
             <strong style={{ fontSize: "38px", fontWeight: 800, color: "var(--text)", display: "block", margin: "6px 0", letterSpacing: "-0.02em" }}>{brl.format(cardsOpen)}</strong>
             <p style={{ fontSize: "13px", color: "var(--muted)", margin: 0, lineHeight: "1.4" }}>
-              Nubank e Unicred importados a partir de extratos. O pagamento Nubank de R$ 482,12 foi desconsiderado de acordo com a sua diretriz.
+              Subtotal identificado nos prints — {monthLabel(selectedPeriod)}.
+              {unicredView.officialTotal ? ` Unicred total oficial: ${brl.format(unicredView.officialTotal)}.` : " Unicred: total oficial aguardando documento."}
+              {nubankView.officialTotal ? ` Nubank total oficial: ${brl.format(nubankView.officialTotal)}.` : " Nubank: total oficial aguardando documento."}
             </p>
+            {unicredPayment && (
+              <p style={{ fontSize: "12px", color: "var(--warning)", margin: "4px 0 0 0" }}>
+                Pagamento Unicred recebido: {brl.format(unicredPayment.amount)} (não contabilizado como gasto)
+              </p>
+            )}
+            {nubankPayment && (
+              <p style={{ fontSize: "12px", color: "var(--warning)", margin: "4px 0 0 0" }}>
+                Pagamento Nubank recebido: {brl.format(nubankPayment.amount)} (não contabilizado como gasto)
+              </p>
+            )}
           </div>
           <div className="card-stack" style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-            <div className="credit-card nubank" style={{ padding: "8px 16px", borderRadius: "var(--r-md)", background: "#1a1324", border: "1px solid rgba(130,76,246,0.2)" }}><small style={{ color: "rgba(130,76,246,0.8)", fontSize: "10px", fontWeight: 700, textTransform: "uppercase" }}>Nubank</small><strong style={{ display: "block", fontSize: "16px", margin: "2px 0" }}>{brl.format(nubankOpen)}</strong><span style={{ fontSize: "10px", color: "var(--muted)" }}>Fecha 31 · Vence 10/08</span></div>
-            <div className="credit-card unicred" style={{ padding: "8px 16px", borderRadius: "var(--r-md)", background: "#0c181a", border: "1px solid rgba(0,180,216,0.2)" }}><small style={{ color: "rgba(0,180,216,0.8)", fontSize: "10px", fontWeight: 700, textTransform: "uppercase" }}>Unicred</small><strong style={{ display: "block", fontSize: "16px", margin: "2px 0" }}>{brl.format(unicredOpen)}</strong><span style={{ fontSize: "10px", color: "var(--muted)" }}>Fecha 01 · Vence 11/08</span></div>
+            <div className="credit-card nubank" style={{ padding: "8px 16px", borderRadius: "var(--r-md)", background: "#1a1324", border: "1px solid rgba(130,76,246,0.2)" }}><small style={{ color: "rgba(130,76,246,0.8)", fontSize: "10px", fontWeight: 700, textTransform: "uppercase" }}>Nubank</small><strong style={{ display: "block", fontSize: "16px", margin: "2px 0" }}>{brl.format(nubankView.identifiedSubtotal)}</strong><span style={{ fontSize: "10px", color: "var(--muted)" }}>{nubankStatusLabel} · {nubankView.entries.length} lançamentos{nubankView.officialTotal ? ` · oficial ${brl.format(nubankView.officialTotal)}` : ""}</span></div>
+            <div className="credit-card unicred" style={{ padding: "8px 16px", borderRadius: "var(--r-md)", background: "#0c181a", border: "1px solid rgba(0,180,216,0.2)" }}><small style={{ color: "rgba(0,180,216,0.8)", fontSize: "10px", fontWeight: 700, textTransform: "uppercase" }}>Unicred</small><strong style={{ display: "block", fontSize: "16px", margin: "2px 0" }}>{brl.format(unicredView.identifiedSubtotal)}</strong><span style={{ fontSize: "10px", color: "var(--muted)" }}>{unicredStatusLabel} · {unicredView.entries.length} lançamentos{unicredView.officialTotal ? ` · oficial ${brl.format(unicredView.officialTotal)}` : ""}</span></div>
           </div>
         </div>
       </section>
@@ -1295,6 +1322,7 @@ function CardsPage({ entries, commitments }: { entries: FinanceEntry[]; commitme
           icon={WalletCards} 
           tone="warning" 
           tooltip="Total de parcelas futuras cadastradas."
+          onClick={() => setShowFutureBreakdown(true)}
         />
         <StatCard 
           title="MacBook restante" 
@@ -1304,12 +1332,12 @@ function CardsPage({ entries, commitments }: { entries: FinanceEntry[]; commitme
           tooltip="Saldo devedor restante estimado para a compra do MacBook."
         />
         <StatCard 
-          title="Faturas importadas" 
+          title="Faturas reconhecidas" 
           value={`${importedCount} de 2`} 
-          subtitle={importedCount === 1 ? "1 de 2 no período" : "Nubank e Unicred"} 
+          subtitle={unicredView.identifiedSubtotal > 0 && nubankView.identifiedSubtotal > 0 ? "Unicred e Nubank com lançamentos" : "Verificar reconciliação"} 
           icon={FileSpreadsheet} 
           tone={importedCount < 2 ? "warning" : "positive"} 
-          tooltip="Faturas do Nubank e Unicred importadas no período atual."
+          tooltip="Faturas do Nubank e Unicred com lançamentos identificados no sistema."
         />
       </section>
       <section className="dashboard-grid dashboard-grid-primary">
@@ -1322,11 +1350,48 @@ function CardsPage({ entries, commitments }: { entries: FinanceEntry[]; commitme
           <div className="compact-list">{installments.slice(0, 10).map((entry) => <div key={entry.id}><span><strong>{entry.title}</strong><small>{formatDate(entry.dueDate)} · {entry.installment}</small></span><b>{brl.format(entry.amount)}</b></div>)}</div>
         </article>
       </section>
+
+      {showFutureBreakdown && (
+        <div className="modal-backdrop" style={{ zIndex: 1000 }} onClick={() => setShowFutureBreakdown(false)}>
+          <div className="modal-content" style={{ maxWidth: "500px", width: "90%", padding: "24px" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div>
+                <span style={{ fontSize: "11px", textTransform: "uppercase", color: "var(--muted)", fontWeight: "bold" }}>Memória de Cálculo</span>
+                <h3 style={{ margin: "4px 0 0 0", fontSize: "16px" }}>Comprometido Futuro</h3>
+              </div>
+              <button className="icon-button" onClick={() => setShowFutureBreakdown(false)}><X size={18} /></button>
+            </div>
+            <p style={{ fontSize: "13px", color: "var(--muted)", marginBottom: "16px" }}>
+              Total de parcelas futuras de compras já realizadas. Inclui parcelas de cartão e despesas recorrentes.
+            </p>
+            <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", maxHeight: "350px", overflowY: "auto" }}>
+              {installments.filter((e) => e.status !== "realizado").slice(0, 30).map((entry) => (
+                <div key={entry.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderBottom: "1px solid var(--border)", fontSize: "12px" }}>
+                  <div>
+                    <strong>{entry.title}</strong>
+                    <span style={{ display: "block", fontSize: "10px", color: "var(--muted)" }}>
+                      {formatDate(entry.dueDate)} · {entry.installment} · {entry.account || "Conta"}
+                    </span>
+                  </div>
+                  <strong style={{ color: "var(--danger)" }}>-{brl.format(entry.amount)}</strong>
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 12px", background: "rgba(255,255,255,0.02)", fontWeight: "bold", fontSize: "13px" }}>
+                <span>Total Futuro</span>
+                <span style={{ color: "var(--danger)" }}>-{brl.format(remaining)}</span>
+              </div>
+            </div>
+            <div style={{ marginTop: "12px", fontSize: "11px", color: "var(--muted)" }}>
+              Fórmula: Soma de parcelas futuras de todas as contas (exclui já realizadas/pagas)
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
 
-function SpendingPage({ entries, categorySpend, settleEntry, removeEntry, onEdit, today, updateEntry, setHistoryModalEntry }: {
+function SpendingPage({ entries, categorySpend, settleEntry, removeEntry, onEdit, today, updateEntry, setHistoryModalEntry, state, selectedPeriod }: {
   entries: FinanceEntry[];
   categorySpend: Array<{ name: string; value: number }>;
   settleEntry: (entry: FinanceEntry) => void;
@@ -1335,30 +1400,66 @@ function SpendingPage({ entries, categorySpend, settleEntry, removeEntry, onEdit
   today: string;
   updateEntry?: (id: string, updated: Omit<FinanceEntry, "id">) => void;
   setHistoryModalEntry?: (entry: FinanceEntry) => void;
+  state: FinanceState;
+  selectedPeriod: string;
 }) {
-  const total = entries.filter((entry) => entry.paidBy !== "father").reduce((sum, entry) => sum + entry.amount, 0);
-  const paidByFather = entries.filter((entry) => entry.paidBy === "father").reduce((sum, entry) => sum + entry.amount, 0);
-  const sorted = [...categorySpend].sort((a, b) => b.value - a.value);
+  const [spendingViewMode, setSpendingViewMode] = useState<"financeiro" | "compra" | "fatura">("financeiro");
+
+  const filteredEntries = useMemo(() => {
+    if (spendingViewMode === "compra") {
+      return state.entries.filter((e) => {
+        if (e.kind !== "expense" || e.paidBy === "father") return false;
+        const purchaseMonth = e.purchaseDate ? e.purchaseDate.slice(0, 7) : e.dueDate.slice(0, 7);
+        return purchaseMonth === selectedPeriod;
+      });
+    }
+    if (spendingViewMode === "fatura") {
+      return state.entries.filter((e) => {
+        if (e.kind !== "expense" || e.paidBy === "father") return false;
+        const invMonth = e.invoiceMonth || e.dueDate.slice(0, 7);
+        const cardFilter = e.account?.toLowerCase() === "unicred" || e.account?.toLowerCase() === "nubank";
+        if (cardFilter) return invMonth === selectedPeriod;
+        return isEntryInPeriod(e, selectedPeriod);
+      });
+    }
+    return entries;
+  }, [spendingViewMode, state.entries, entries, selectedPeriod]);
+
+  const total = filteredEntries.filter((entry) => entry.paidBy !== "father").reduce((sum, entry) => sum + entry.amount, 0);
+  const paidByFather = filteredEntries.filter((entry) => entry.paidBy === "father").reduce((sum, entry) => sum + entry.amount, 0);
+  const sorted = [...spendingByCategory(filteredEntries)].sort((a, b) => b.value - a.value);
   const maxVal = sorted[0]?.value ?? 1;
+
+  const viewLabel = spendingViewMode === "compra" ? "por data da compra" : spendingViewMode === "fatura" ? "por fatura" : "por mês financeiro";
+
   return (
     <>
       <section className="decision-hero flex-col" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "16px", padding: "28px 32px", marginBottom: "24px" }}>
         <span className="eyebrow"><ReceiptText size={16} /> Análise de Despesas</span>
-        <h2 style={{ fontSize: "14px", fontWeight: 600, color: "var(--muted-2)", margin: 0 }}>Quanto foi comprometido este mês?</h2>
-        <strong style={{ fontSize: "38px", fontWeight: 800, color: "var(--text)", display: "block", margin: "6px 0", letterSpacing: "-0.02em" }}>{brl.format(total)}</strong>
-        <p style={{ fontSize: "13px", color: "var(--muted)", margin: 0, lineHeight: "1.4" }}>
-          Total acumulado de despesas e parcelas no período de caixa atual, excluindo pagamentos financiados por terceiros.
-        </p>
+        <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+          <div style={{ flex: 1, minWidth: "280px" }}>
+            <h2 style={{ fontSize: "14px", fontWeight: 600, color: "var(--muted-2)", margin: 0 }}>Quanto foi comprometido {viewLabel}?</h2>
+            <strong style={{ fontSize: "38px", fontWeight: 800, color: "var(--text)", display: "block", margin: "6px 0", letterSpacing: "-0.02em" }}>{brl.format(total)}</strong>
+            <p style={{ fontSize: "13px", color: "var(--muted)", margin: 0, lineHeight: "1.4" }}>
+              {spendingViewMode === "compra" ? "Compras realizadas neste mês, independente da fatura em que serão pagas." : spendingViewMode === "fatura" ? "Despesas agrupadas por ciclo de fatura dos cartões e vencimentos de contas." : "Total de despesas e parcelas no período de caixa atual, excluindo pagamentos financiados por terceiros."}
+            </p>
+          </div>
+          <div className="type-toggle" role="group" aria-label="Modo de visualização" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: "2px", height: "36px" }}>
+            <button type="button" className={spendingViewMode === "financeiro" ? "active" : ""} onClick={() => setSpendingViewMode("financeiro")} style={{ height: "30px", fontSize: "11px" }}>Mês financeiro</button>
+            <button type="button" className={spendingViewMode === "compra" ? "active" : ""} onClick={() => setSpendingViewMode("compra")} style={{ height: "30px", fontSize: "11px" }}>Data da compra</button>
+            <button type="button" className={spendingViewMode === "fatura" ? "active" : ""} onClick={() => setSpendingViewMode("fatura")} style={{ height: "30px", fontSize: "11px" }}>Fatura</button>
+          </div>
+        </div>
       </section>
 
       <section className="stat-grid stat-grid-three">
         <StatCard 
           title="Comprometido" 
           value={brl.format(total)} 
-          subtitle="atuais e futuros" 
+          subtitle={`${filteredEntries.length} lançamentos`} 
           icon={ReceiptText} 
           tone="warning" 
-          tooltip="Total de despesas e parcelas vencendo neste período."
+          tooltip="Total de despesas e parcelas no período selecionado."
         />
         <StatCard 
           title="Pago por você" 
@@ -1397,7 +1498,7 @@ function SpendingPage({ entries, categorySpend, settleEntry, removeEntry, onEdit
         </article>
         <article className="panel panel-wide">
           <div className="panel-heading"><div><span>Lançamentos</span><h3>Despesas e responsáveis</h3></div></div>
-          <EntryTable entries={entries.sort((a, b) => a.dueDate.localeCompare(b.dueDate))} settleEntry={settleEntry} removeEntry={removeEntry} onEdit={onEdit} today={today} updateEntry={updateEntry} setHistoryModalEntry={setHistoryModalEntry} />
+          <EntryTable entries={filteredEntries.sort((a, b) => a.dueDate.localeCompare(b.dueDate))} settleEntry={settleEntry} removeEntry={removeEntry} onEdit={onEdit} today={today} updateEntry={updateEntry} setHistoryModalEntry={setHistoryModalEntry} />
         </article>
       </section>
     </>
@@ -1413,11 +1514,12 @@ function GoalPage({ state, summary, goalGap, cashflow, setState, today }: { stat
     const rows: Array<{ month: string; value: number }> = [];
     let running = summary.patrimony;
     const [year, month] = today.split("-").map(Number);
-    for (let i = 0; i < 24 && running < state.goal; i++) {
+    for (let i = 0; i < 25; i++) {
       const d = new Date(year, month - 1 + i, 1);
       const label = new Intl.DateTimeFormat("pt-BR", { month: "short", year: "2-digit" }).format(d);
-      running = Math.min(state.goal, running + rate);
       rows.push({ month: label, value: running });
+      if (running >= state.goal) break;
+      running = Math.min(state.goal, running + rate);
     }
     return rows;
   }
@@ -2044,19 +2146,45 @@ function QualityPage({ state, selectedPeriod, pushToast }: { state: FinanceState
     setCurrentClose(getMonthClose(selectedPeriod));
   };
 
+  // Financial quality metrics
+  const unicredEntries = state.entries.filter((e) => e.account?.toLowerCase() === "unicred");
+  const nubankEntries = state.entries.filter((e) => e.account?.toLowerCase() === "nubank");
+  const invoicesRecognized = (unicredEntries.length > 0 ? 1 : 0) + (nubankEntries.length > 0 ? 1 : 0);
+  const invoicesTotal = 2;
+  const allEntries = state.entries;
+  const entriesWithCategory = allEntries.filter((e) => e.category && e.category !== "Outros");
+  const entriesWithQuality = allEntries.filter((e) => e.dataQuality === "completo");
+  const closedPeriods = closes.filter((c) => c.status === "closed").length;
+  const invoiceReconciliationRate = Array.isArray(state.invoices) && state.invoices.length > 0
+    ? state.invoices.filter((inv) => {
+        const subtotal = allEntries
+          .filter((e) => e.account?.toLowerCase() === inv.cardId.toLowerCase() && e.invoiceMonth === inv.referenceMonth)
+          .reduce((sum, e) => sum + e.amount, 0);
+        return inv.officialTotal !== undefined && Math.abs(subtotal - inv.officialTotal) < 0.01;
+      }).length / state.invoices.length
+    : 0;
+
+  const invoicesWarning = invoicesRecognized < invoicesTotal;
+  const reconciliationWarning = invoiceReconciliationRate < 1;
+  const categoriesWarning = entriesWithCategory.length < allEntries.length;
+
   return (
     <>
       <section className="decision-hero compact-hero" style={{ marginBottom: "24px" }}>
         <div>
           <span className="eyebrow"><Gauge size={16} /> Qualidade do produto</span>
-          <h2 style={{ fontSize: "16px", fontWeight: 600, marginTop: "4px" }}>Métricas de uso e validação</h2>
+          <h2 style={{ fontSize: "16px", fontWeight: 600, marginTop: "4px" }}>Métricas de uso e validação financeira</h2>
           <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "4px" }}>
-            {stats.last30d} eventos de uso nos últimos 30 dias · {stats.taskCompletionRate * 100}% conclusão · {stats.errorCount} erros
+            {stats.last30d} eventos de uso nos últimos 30 dias · {stats.taskCompletionRate * 100}% conclusão de tarefas · {stats.errorCount} erros de interface
           </p>
         </div>
         <button className="secondary-button" style={{ fontSize: "11px", padding: "4px 10px" }} onClick={refresh}>Atualizar</button>
       </section>
 
+      {/* Usage Quality */}
+      <section style={{ marginBottom: "8px" }}>
+        <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Qualidade de Uso</span>
+      </section>
       <section className="dashboard-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
           <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Taxa conclusão</span>
@@ -2066,12 +2194,34 @@ function QualityPage({ state, selectedPeriod, pushToast }: { state: FinanceState
         <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
           <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Fechamentos</span>
           <strong style={{ fontSize: "28px" }}>{stats.monthClosings}</strong>
-          <small style={{ fontSize: "11px", color: "var(--muted)" }}>{closes.filter((c) => c.status === "closed").length} meses fechados</small>
+          <small style={{ fontSize: "11px", color: "var(--muted)" }}>{closedPeriods} meses fechados</small>
         </article>
         <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
           <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Feedback</span>
           <strong style={{ fontSize: "28px" }}>{stats.feedbackCount}</strong>
           <small style={{ fontSize: "11px", color: "var(--muted)" }}>respostas coletadas</small>
+        </article>
+      </section>
+
+      {/* Financial Quality */}
+      <section style={{ marginTop: "24px", marginBottom: "8px" }}>
+        <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Qualidade Financeira</span>
+      </section>
+      <section className="dashboard-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+        <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
+          <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Faturas reconhecidas</span>
+          <strong style={{ fontSize: "28px", color: invoicesWarning ? "var(--warning)" : "var(--success)" }}>{invoicesRecognized} de {invoicesTotal}</strong>
+          <small style={{ fontSize: "11px", color: "var(--muted)" }}>cartões com lançamentos identificados</small>
+        </article>
+        <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
+          <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Reconciliação</span>
+          <strong style={{ fontSize: "28px", color: reconciliationWarning ? "var(--warning)" : "var(--success)" }}>{(invoiceReconciliationRate * 100).toFixed(0)}%</strong>
+          <small className="quality-small">faturas com total oficial batendo</small>
+        </article>
+        <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
+          <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Categorias definidas</span>
+          <strong style={{ fontSize: "28px", color: categoriesWarning ? "var(--warning)" : "var(--success)" }}>{((entriesWithCategory.length / Math.max(allEntries.length, 1)) * 100).toFixed(0)}%</strong>
+          <small style={{ fontSize: "11px", color: "var(--muted)" }}>{entriesWithCategory.length} de {allEntries.length} lançamentos</small>
         </article>
       </section>
 

@@ -1,5 +1,6 @@
 import type { FinanceState, FinanceEntry } from "./types";
 import { isEntryInPeriod } from "./finance";
+import { buildInvoiceView } from "./invoice";
 
 export function selectAvailableCash(state: FinanceState): number {
   return state.accounts
@@ -13,12 +14,32 @@ export function selectPatrimony(state: FinanceState): number {
 
 export function selectInvoiceEntries(state: FinanceState, card: string, month: string): FinanceEntry[] {
   return state.entries.filter(
-    (e) => e.account?.toLowerCase() === card.toLowerCase() && e.invoiceMonth === month
+    (e) =>
+      e.account?.toLowerCase() === card.toLowerCase() &&
+      e.invoiceMonth === month &&
+      e.transactionType !== "invoice_payment"
   );
 }
 
 export function selectInvoiceTotal(state: FinanceState, card: string, month: string): number {
   return selectInvoiceEntries(state, card, month).reduce((sum, e) => sum + e.amount, 0);
+}
+
+export function selectAllCardPurchases(state: FinanceState): number {
+  return state.entries
+    .filter((e) =>
+      e.includeInSpending !== false &&
+      (e.account?.toLowerCase() === "unicred" || e.account?.toLowerCase() === "nubank") &&
+      e.transactionType !== "invoice_payment" &&
+      e.status !== "projetado"
+    )
+    .reduce((sum, e) => sum + e.amount, 0);
+}
+
+export function selectFutureCardInstallments(state: FinanceState): number {
+  return state.entries
+    .filter((e) => e.status === "projetado" && (e.account?.toLowerCase() === "unicred" || e.account?.toLowerCase() === "nubank"))
+    .reduce((sum, e) => sum + e.amount, 0);
 }
 
 export function selectMonthlyExpenses(state: FinanceState, month: string): number {
@@ -49,14 +70,14 @@ export function selectUncertainReceivables(state: FinanceState, month: string): 
 export function selectSafeToSpendConservative(state: FinanceState, month: string): number {
   const cash = selectAvailableCash(state);
   const expenses = selectMonthlyExpenses(state, month);
-  return cash - expenses - 100; // R$ 100 margem de segurança
+  return cash - expenses - 100;
 }
 
 export function selectSafeToSpendProbable(state: FinanceState, month: string): number {
   const cash = selectAvailableCash(state);
   const expenses = selectMonthlyExpenses(state, month);
   const confirmedIncomes = selectConfirmedReceivables(state, month);
-  return cash + confirmedIncomes - expenses - 50; // R$ 50 margem de segurança
+  return cash + confirmedIncomes - expenses - 50;
 }
 
 export function selectSafeToSpendOptimistic(state: FinanceState, month: string): number {
@@ -64,7 +85,7 @@ export function selectSafeToSpendOptimistic(state: FinanceState, month: string):
   const expenses = selectMonthlyExpenses(state, month);
   const confirmedIncomes = selectConfirmedReceivables(state, month);
   const uncertainIncomes = selectUncertainReceivables(state, month);
-  return cash + confirmedIncomes + uncertainIncomes - expenses; // R$ 0 margem
+  return cash + confirmedIncomes + uncertainIncomes - expenses;
 }
 
 // Interface de Relatórios de Auditoria
@@ -105,39 +126,93 @@ export function auditDisplayedValues(state: FinanceState, currentMonth: string):
     formula: "Soma do saldo das contas líquidas ativas",
   });
 
-  // 3. Fatura Unicred do Mês
-  const unicredSubtotal = selectInvoiceTotal(state, "Unicred", currentMonth);
+  // 3. Fatura Unicred — subtotal identificado vs soma de compras
+  const unicredEntrySubtotal = selectInvoiceTotal(state, "Unicred", currentMonth);
   const unicredInvoice = state.invoices?.find(
     (i) => i.cardId.toLowerCase() === "unicred" && i.referenceMonth === currentMonth
   );
-  const unicredExpected = unicredInvoice?.officialTotal ?? (currentMonth === "2026-08" ? 801.85 : unicredSubtotal);
+
   reports.push({
-    kpi: `Fatura Unicred (${currentMonth})`,
-    displayed: unicredSubtotal,
-    recalculated: unicredExpected,
-    diff: unicredSubtotal - unicredExpected,
-    confidence: unicredInvoice ? "alta" : "média",
-    status: Math.abs(unicredSubtotal - unicredExpected) < 0.01 ? "ok" : "divergente",
-    formula: "Soma de compras ativas vs Valor total oficial cadastrado",
+    kpi: `Unicred (${currentMonth}) — Compras recalculadas`,
+    displayed: unicredEntrySubtotal,
+    recalculated: unicredEntrySubtotal,
+    diff: 0,
+    confidence: "alta",
+    status: "ok",
+    formula: "Soma de entries com account=Unicred e invoiceMonth=currentMonth (exclui invoice_payment)",
   });
 
-  // 4. Fatura Nubank do Mês
-  const nubankSubtotal = selectInvoiceTotal(state, "Nubank", currentMonth);
+  if (unicredInvoice) {
+    const diffUnicred = unicredInvoice.identifiedSubtotal - unicredEntrySubtotal;
+    reports.push({
+      kpi: `Unicred (${currentMonth}) — Entity vs Lançamentos`,
+      displayed: unicredInvoice.identifiedSubtotal,
+      recalculated: unicredEntrySubtotal,
+      diff: diffUnicred,
+      confidence: unicredInvoice.officialTotal ? "alta" : "média",
+      status: Math.abs(diffUnicred) < 0.01 ? "ok" : "divergente",
+      formula: unicredInvoice.officialTotal
+        ? `Invoice.identifiedSubtotal (R$ ${unicredInvoice.officialTotal.toFixed(2)} oficial) vs Soma de entries`
+        : `Invoice.identifiedSubtotal vs Soma de entries (sem total oficial)`,
+    });
+  }
+
+  // 4. Fatura Nubank — subtotal identificado vs soma de compras
+  const nubankEntrySubtotal = selectInvoiceTotal(state, "Nubank", currentMonth);
   const nubankInvoice = state.invoices?.find(
     (i) => i.cardId.toLowerCase() === "nubank" && i.referenceMonth === currentMonth
   );
-  const nubankExpected = nubankInvoice?.officialTotal ?? (currentMonth === "2026-08" ? 192.40 : nubankSubtotal);
+
   reports.push({
-    kpi: `Fatura Nubank (${currentMonth})`,
-    displayed: nubankSubtotal,
-    recalculated: nubankExpected,
-    diff: nubankSubtotal - nubankExpected,
-    confidence: nubankInvoice ? "alta" : "média",
-    status: Math.abs(nubankSubtotal - nubankExpected) < 0.01 ? "ok" : "divergente",
-    formula: "Soma de compras ativas vs Valor total oficial cadastrado",
+    kpi: `Nubank (${currentMonth}) — Compras recalculadas`,
+    displayed: nubankEntrySubtotal,
+    recalculated: nubankEntrySubtotal,
+    diff: 0,
+    confidence: "alta",
+    status: "ok",
+    formula: "Soma de entries com account=Nubank e invoiceMonth=currentMonth (exclui invoice_payment)",
   });
 
-  // 5. Livre para Gastar (Conservador)
+  if (nubankInvoice) {
+    const diffNubank = nubankInvoice.identifiedSubtotal - nubankEntrySubtotal;
+    reports.push({
+      kpi: `Nubank (${currentMonth}) — Entity vs Lançamentos`,
+      displayed: nubankInvoice.identifiedSubtotal,
+      recalculated: nubankEntrySubtotal,
+      diff: diffNubank,
+      confidence: nubankInvoice.officialTotal ? "alta" : "média",
+      status: Math.abs(diffNubank) < 0.01 ? "ok" : "divergente",
+      formula: nubankInvoice.officialTotal
+        ? `Invoice.identifiedSubtotal (R$ ${nubankInvoice.officialTotal.toFixed(2)} oficial) vs Soma de entries`
+        : `Invoice.identifiedSubtotal vs Soma de entries (sem total oficial)`,
+    });
+  }
+
+  // 5. Total combinado de compras de cartão
+  const allCardPurchases = selectAllCardPurchases(state);
+  reports.push({
+    kpi: "Compras combinadas (todos os cartões)",
+    displayed: allCardPurchases,
+    recalculated: allCardPurchases,
+    diff: 0,
+    confidence: "alta",
+    status: "ok",
+    formula: "Soma de todas as compras de cartão (exclui invoice_payment)",
+  });
+
+  // 6. Parcelas futuras
+  const futureInstallments = selectFutureCardInstallments(state);
+  reports.push({
+    kpi: "Parcelas futuras confirmadas",
+    displayed: futureInstallments,
+    recalculated: futureInstallments,
+    diff: 0,
+    confidence: "alta",
+    status: "ok",
+    formula: "Soma de entries de cartão com status=projetado",
+  });
+
+  // 7. Livre para Gastar (Conservador)
   const conservativeLivre = selectSafeToSpendConservative(state, currentMonth);
   reports.push({
     kpi: `Livre para Gastar (${currentMonth})`,

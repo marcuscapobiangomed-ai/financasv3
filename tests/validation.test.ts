@@ -83,7 +83,7 @@ describe("validateDataIntegrity", () => {
 });
 
 describe("runMigrations", () => {
-  it("leaves v4 state unchanged", () => {
+  it("upgrades v4 state to v5 with corrected invoices", () => {
     const v4State: FinanceState = {
       schemaVersion: 4,
       goal: 10000,
@@ -92,10 +92,19 @@ describe("runMigrations", () => {
       updatedAt: "",
     };
     const res = runMigrations(v4State);
-    expect(res.schemaVersion).toBe(4);
+    expect(res.schemaVersion).toBe(5);
+    // Should have corrected invoice entities
+    const unicredInvoice = res.invoices?.find((i) => i.id === "invoice-unicred-2026-08");
+    expect(unicredInvoice).toBeDefined();
+    if (unicredInvoice) {
+      expect(unicredInvoice.status).toBe("partial");
+      expect(unicredInvoice.officialTotal).toBeUndefined();
+      expect(unicredInvoice.dataQuality).toBe("parcial");
+      expect(unicredInvoice.closingDate).toBe("2026-08-01");
+    }
   });
 
-  it("migrates legacy schema to v4 by populating fallback properties", () => {
+  it("migrates legacy schema to v5 by populating fallback properties", () => {
     const legacyState = {
       goal: 10000,
       accounts: [],
@@ -105,9 +114,27 @@ describe("runMigrations", () => {
       updatedAt: "",
     };
     const res = runMigrations(legacyState);
-    expect(res.schemaVersion).toBe(4);
+    expect(res.schemaVersion).toBe(5);
     expect(res.entries[0].dataQuality).toBe("completo");
     expect(res.entries[0].paidBy).toBe("me");
     expect(res.entries[0].isOfficial).toBe(true);
+  });
+
+  it("does not re-migrate v5 state", () => {
+    const v5State: FinanceState = {
+      schemaVersion: 5,
+      goal: 10000,
+      accounts: [],
+      entries: [
+        { id: "seed-1", title: "Existing entry", amount: 50, kind: "expense", dueDate: "2026-08-01", status: "a_pagar", category: "Lazer", account: "Nubank", invoiceMonth: "2026-08", transactionType: "purchase", includeInSpending: true, origin: "seed" }
+      ],
+      invoices: [
+        { id: "invoice-nubank-2026-08", cardId: "Nubank", referenceMonth: "2026-08", closingDate: "2026-07-31", dueDate: "2026-08-10", officialTotal: undefined, identifiedSubtotal: 50, status: "partial", dataQuality: "parcial" }
+      ],
+      updatedAt: "",
+    };
+    const res = runMigrations(v5State);
+    expect(res.schemaVersion).toBe(5);
+    expect(res.entries.length).toBe(1);
   });
 });

@@ -66,6 +66,9 @@ export function CorrectionCenter({
     return getMonthClose(period).status === "closed";
   });
 
+  const criticalIssues = issues.filter((i) => i.type === "error");
+  const warningIssues = issues.filter((i) => i.type === "warning");
+
   return (
     <>
       <section className="decision-hero compact-hero" style={{ marginBottom: "24px" }}>
@@ -74,6 +77,8 @@ export function CorrectionCenter({
           <h2 style={{ fontSize: "16px", fontWeight: 600, marginTop: "4px" }}>Revise e corrija seus dados</h2>
           <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "4px" }}>
             {lowConfidence.length} com baixa confiança · {noCategory.length} sem categoria · {closedPeriodChanges.length} em meses fechados · {trashItems.length} na lixeira
+            {criticalIssues.length > 0 && <span style={{ color: "var(--danger)", fontWeight: 600 }}> · {criticalIssues.length} problemas críticos de integridade</span>}
+            {warningIssues.length > 0 && <span style={{ color: "var(--warning)" }}> · {warningIssues.length} alertas</span>}
           </p>
         </div>
         <button className="secondary-button" style={{ fontSize: "11px", padding: "4px 10px" }} onClick={refresh}>Atualizar</button>
