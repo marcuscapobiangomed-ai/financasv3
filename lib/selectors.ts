@@ -1,6 +1,5 @@
 import type { FinanceState, FinanceEntry } from "./types";
 import { isEntryInPeriod } from "./finance";
-import { buildInvoiceView } from "./invoice";
 
 export function selectAvailableCash(state: FinanceState): number {
   return state.accounts
@@ -66,7 +65,7 @@ export function selectUncertainReceivables(state: FinanceState, month: string): 
     .reduce((sum, e) => sum + e.amount, 0);
 }
 
-// Três Cenários do Livre para Gastar
+// Three safe-to-spend scenarios.
 export function selectSafeToSpendConservative(state: FinanceState, month: string): number {
   const cash = selectAvailableCash(state);
   const expenses = selectMonthlyExpenses(state, month);
@@ -88,7 +87,48 @@ export function selectSafeToSpendOptimistic(state: FinanceState, month: string):
   return cash + confirmedIncomes + uncertainIncomes - expenses;
 }
 
-// Interface de Relatórios de Auditoria
+function computeSafeToSpendAudit(state: FinanceState, today: string, safetyMargin: number) {
+  const availableCash = selectAvailableCash(state);
+
+  const pendingIncomes = state.entries
+    .filter((entry) => entry.kind === "income" && entry.status === "a_receber_confirmado" && entry.dueDate >= today)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+
+  const [year, month] = today.split("-").map(Number);
+  const lastDay = new Date(year, month, 0).getDate();
+  const endOfMonthDate = `${today.slice(0, 7)}-${String(lastDay).padStart(2, "0")}`;
+  const nextIncomeDate = pendingIncomes[0]?.dueDate || endOfMonthDate;
+
+  const incomesUntilNext = state.entries
+    .filter((entry) => entry.kind === "income" && entry.status === "a_receber_confirmado" && entry.dueDate >= today && entry.dueDate <= nextIncomeDate)
+    .reduce((sum, entry) => sum + entry.amount, 0);
+
+  const expensesUntilNext = state.entries
+    .filter((entry) => entry.kind === "expense" && entry.paidBy !== "father" && entry.status !== "realizado" && entry.dueDate >= today && entry.dueDate <= nextIncomeDate)
+    .reduce((sum, entry) => sum + entry.amount, 0);
+
+  return {
+    safeToSpend: availableCash + incomesUntilNext - expensesUntilNext - safetyMargin,
+    nextIncomeDate,
+    availableCash,
+    incomesUntilNext,
+    expensesUntilNext,
+    safetyMargin,
+  };
+}
+
+export type CalculationAuditSnapshot = {
+  patrimony: number;
+  reserve: number;
+  pendingIncome: number;
+  pendingExpenses: number;
+  safeToSpend: number;
+  cardsSubtotal: number;
+  unicredSubtotal: number;
+  nubankSubtotal: number;
+  futureInstallments: number;
+};
+
 export type CalculationAuditReport = {
   kpi: string;
   displayed: number;
@@ -99,129 +139,120 @@ export type CalculationAuditReport = {
   formula: string;
 };
 
-export function auditDisplayedValues(state: FinanceState, currentMonth: string): CalculationAuditReport[] {
+export function recalculateSafeToSpendAudit(state: FinanceState, today: string, safetyMargin: number) {
+  return computeSafeToSpendAudit(state, today, safetyMargin);
+}
+
+export function auditDisplayedValues(
+  state: FinanceState,
+  currentMonth: string,
+  snapshot: CalculationAuditSnapshot,
+  today: string,
+  safetyMargin: number
+): CalculationAuditReport[] {
   const reports: CalculationAuditReport[] = [];
 
-  // 1. Patrimônio
   const patrimony = selectPatrimony(state);
+  const reserve = state.accounts.filter((account) => !account.available).reduce((sum, account) => sum + account.balance, 0);
+  const pendingIncome = state.entries
+    .filter((entry) => entry.kind === "income" && entry.status !== "recebido" && isEntryInPeriod(entry, currentMonth))
+    .reduce((sum, entry) => sum + entry.amount, 0);
+  const pendingExpenses = selectMonthlyExpenses(state, currentMonth);
+  const unicredEntrySubtotal = selectInvoiceTotal(state, "Unicred", currentMonth);
+  const nubankEntrySubtotal = selectInvoiceTotal(state, "Nubank", currentMonth);
+  const futureInstallments = state.entries
+    .filter((entry) => entry.kind === "expense" && entry.installment && entry.status !== "realizado")
+    .reduce((sum, entry) => sum + entry.amount, 0);
+  const safeToSpendAudit = computeSafeToSpendAudit(state, today, safetyMargin);
+
   reports.push({
     kpi: "Patrimônio Líquido",
-    displayed: patrimony,
+    displayed: snapshot.patrimony,
     recalculated: patrimony,
-    diff: 0,
+    diff: snapshot.patrimony - patrimony,
     confidence: "alta",
-    status: "ok",
+    status: Math.abs(snapshot.patrimony - patrimony) < 0.01 ? "ok" : "divergente",
     formula: "Soma de saldos de todas as contas",
   });
 
-  // 2. Caixa Disponível
-  const cash = selectAvailableCash(state);
   reports.push({
-    kpi: "Caixa Disponível",
-    displayed: cash,
-    recalculated: cash,
-    diff: 0,
+    kpi: "Reserva",
+    displayed: snapshot.reserve,
+    recalculated: reserve,
+    diff: snapshot.reserve - reserve,
     confidence: "alta",
-    status: "ok",
-    formula: "Soma do saldo das contas líquidas ativas",
+    status: Math.abs(snapshot.reserve - reserve) < 0.01 ? "ok" : "divergente",
+    formula: "Soma das contas marcadas como nao disponiveis",
   });
 
-  // 3. Fatura Unicred — subtotal identificado vs soma de compras
-  const unicredEntrySubtotal = selectInvoiceTotal(state, "Unicred", currentMonth);
-  const unicredInvoice = state.invoices?.find(
-    (i) => i.cardId.toLowerCase() === "unicred" && i.referenceMonth === currentMonth
-  );
+  reports.push({
+    kpi: `Recebimentos (${currentMonth})`,
+    displayed: snapshot.pendingIncome,
+    recalculated: pendingIncome,
+    diff: snapshot.pendingIncome - pendingIncome,
+    confidence: "alta",
+    status: Math.abs(snapshot.pendingIncome - pendingIncome) < 0.01 ? "ok" : "divergente",
+    formula: "Receitas pendentes e confirmadas no periodo selecionado",
+  });
 
   reports.push({
-    kpi: `Unicred (${currentMonth}) — Compras recalculadas`,
-    displayed: unicredEntrySubtotal,
-    recalculated: unicredEntrySubtotal,
-    diff: 0,
+    kpi: `Compromissos (${currentMonth})`,
+    displayed: snapshot.pendingExpenses,
+    recalculated: pendingExpenses,
+    diff: snapshot.pendingExpenses - pendingExpenses,
     confidence: "alta",
-    status: "ok",
+    status: Math.abs(snapshot.pendingExpenses - pendingExpenses) < 0.01 ? "ok" : "divergente",
+    formula: "Despesas pendentes do periodo selecionado",
+  });
+
+  reports.push({
+    kpi: `Unicred (${currentMonth})`,
+    displayed: snapshot.unicredSubtotal,
+    recalculated: unicredEntrySubtotal,
+    diff: snapshot.unicredSubtotal - unicredEntrySubtotal,
+    confidence: "alta",
+    status: Math.abs(snapshot.unicredSubtotal - unicredEntrySubtotal) < 0.01 ? "ok" : "divergente",
     formula: "Soma de entries com account=Unicred e invoiceMonth=currentMonth (exclui invoice_payment)",
   });
 
-  if (unicredInvoice) {
-    const diffUnicred = unicredInvoice.identifiedSubtotal - unicredEntrySubtotal;
-    reports.push({
-      kpi: `Unicred (${currentMonth}) — Entity vs Lançamentos`,
-      displayed: unicredInvoice.identifiedSubtotal,
-      recalculated: unicredEntrySubtotal,
-      diff: diffUnicred,
-      confidence: unicredInvoice.officialTotal ? "alta" : "média",
-      status: Math.abs(diffUnicred) < 0.01 ? "ok" : "divergente",
-      formula: unicredInvoice.officialTotal
-        ? `Invoice.identifiedSubtotal (R$ ${unicredInvoice.officialTotal.toFixed(2)} oficial) vs Soma de entries`
-        : `Invoice.identifiedSubtotal vs Soma de entries (sem total oficial)`,
-    });
-  }
-
-  // 4. Fatura Nubank — subtotal identificado vs soma de compras
-  const nubankEntrySubtotal = selectInvoiceTotal(state, "Nubank", currentMonth);
-  const nubankInvoice = state.invoices?.find(
-    (i) => i.cardId.toLowerCase() === "nubank" && i.referenceMonth === currentMonth
-  );
-
   reports.push({
-    kpi: `Nubank (${currentMonth}) — Compras recalculadas`,
-    displayed: nubankEntrySubtotal,
+    kpi: `Nubank (${currentMonth})`,
+    displayed: snapshot.nubankSubtotal,
     recalculated: nubankEntrySubtotal,
-    diff: 0,
+    diff: snapshot.nubankSubtotal - nubankEntrySubtotal,
     confidence: "alta",
-    status: "ok",
+    status: Math.abs(snapshot.nubankSubtotal - nubankEntrySubtotal) < 0.01 ? "ok" : "divergente",
     formula: "Soma de entries com account=Nubank e invoiceMonth=currentMonth (exclui invoice_payment)",
   });
 
-  if (nubankInvoice) {
-    const diffNubank = nubankInvoice.identifiedSubtotal - nubankEntrySubtotal;
-    reports.push({
-      kpi: `Nubank (${currentMonth}) — Entity vs Lançamentos`,
-      displayed: nubankInvoice.identifiedSubtotal,
-      recalculated: nubankEntrySubtotal,
-      diff: diffNubank,
-      confidence: nubankInvoice.officialTotal ? "alta" : "média",
-      status: Math.abs(diffNubank) < 0.01 ? "ok" : "divergente",
-      formula: nubankInvoice.officialTotal
-        ? `Invoice.identifiedSubtotal (R$ ${nubankInvoice.officialTotal.toFixed(2)} oficial) vs Soma de entries`
-        : `Invoice.identifiedSubtotal vs Soma de entries (sem total oficial)`,
-    });
-  }
-
-  // 5. Total combinado de compras de cartão
-  const allCardPurchases = selectAllCardPurchases(state);
   reports.push({
-    kpi: "Compras combinadas (todos os cartões)",
-    displayed: allCardPurchases,
-    recalculated: allCardPurchases,
-    diff: 0,
+    kpi: "Compras combinadas (todos os cartoes)",
+    displayed: snapshot.cardsSubtotal,
+    recalculated: unicredEntrySubtotal + nubankEntrySubtotal,
+    diff: snapshot.cardsSubtotal - (unicredEntrySubtotal + nubankEntrySubtotal),
     confidence: "alta",
-    status: "ok",
-    formula: "Soma de todas as compras de cartão (exclui invoice_payment)",
+    status: Math.abs(snapshot.cardsSubtotal - (unicredEntrySubtotal + nubankEntrySubtotal)) < 0.01 ? "ok" : "divergente",
+    formula: "Soma das compras de Unicred e Nubank no periodo selecionado",
   });
 
-  // 6. Parcelas futuras
-  const futureInstallments = selectFutureCardInstallments(state);
   reports.push({
     kpi: "Parcelas futuras confirmadas",
-    displayed: futureInstallments,
+    displayed: snapshot.futureInstallments,
     recalculated: futureInstallments,
-    diff: 0,
+    diff: snapshot.futureInstallments - futureInstallments,
     confidence: "alta",
-    status: "ok",
-    formula: "Soma de entries de cartão com status=projetado",
+    status: Math.abs(snapshot.futureInstallments - futureInstallments) < 0.01 ? "ok" : "divergente",
+    formula: "Soma de entries de cartao com status=projetado",
   });
 
-  // 7. Livre para Gastar (Conservador)
-  const conservativeLivre = selectSafeToSpendConservative(state, currentMonth);
   reports.push({
     kpi: `Livre para Gastar (${currentMonth})`,
-    displayed: conservativeLivre,
-    recalculated: conservativeLivre,
-    diff: 0,
+    displayed: snapshot.safeToSpend,
+    recalculated: safeToSpendAudit.safeToSpend,
+    diff: snapshot.safeToSpend - safeToSpendAudit.safeToSpend,
     confidence: "alta",
-    status: "ok",
-    formula: "Caixa Disponível - Despesas Pendentes - Margem (R$ 100)",
+    status: Math.abs(snapshot.safeToSpend - safeToSpendAudit.safeToSpend) < 0.01 ? "ok" : "divergente",
+    formula: "Caixa disponivel + receitas confirmadas ate a proxima renda - despesas ate a proxima renda - margem",
   });
 
   return reports;

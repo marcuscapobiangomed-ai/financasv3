@@ -6,26 +6,30 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "test": "vitest run"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
     "lucide-react": "1.25.0",
-    "next": "16.2.10",
+    "next": "^16.2.11",
     "postcss": "8.5.10",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "recharts": "3.9.2"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
     "@types/node": "24.7.2",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
+    "eslint": "^9.34.0",
+    "eslint-config-next": "^16.2.11",
     "typescript": "5.9.3",
     "vitest": "^4.1.10"
   },
   "overrides": {
+    "sharp": "0.35.3",
     "postcss": "8.5.10"
   }
 }

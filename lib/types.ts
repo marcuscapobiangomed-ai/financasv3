@@ -19,6 +19,8 @@ export type EntryOrigin =
 
 export type DataQuality = "completo" | "parcial" | "estimado";
 
+export type InstallmentEditScope = "single" | "current_and_next" | "all";
+
 export type TransactionType =
   | "purchase"
   | "iof"

@@ -67,7 +67,7 @@ export function RecoveryDiagnostics({
 
     let status = "";
     let color = "";
-    let item = browser || seed || (trash?.entry as FinanceEntry | undefined);
+    const item = browser || seed || (trash?.entry as FinanceEntry | undefined);
 
     if (seed && !browser) {
       if (trash) {
@@ -554,5 +554,4 @@ export function RecoveryDiagnostics({
     </div>
   );
 }
-
 

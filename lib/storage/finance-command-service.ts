@@ -1,10 +1,9 @@
-import type { FinanceState, FinanceEntry, Account } from "../types";
+import type { FinanceState, FinanceEntry, Account, InstallmentEditScope } from "../types";
 import { financeRepository } from "./local-storage-repository";
 import { validateDataIntegrity } from "../validation";
 import { recordAudit } from "../audit";
 import { trashEntry } from "../trash";
 
-// Helper to calculate available cash adjustments
 function adjustCashBalance(
   accounts: Account[],
   kind: "income" | "expense",
@@ -21,6 +20,107 @@ function adjustCashBalance(
   );
 }
 
+function isSettled(entry: FinanceEntry): boolean {
+  return entry.status === "recebido" || entry.status === "realizado";
+}
+
+function applyCashDelta(accounts: Account[], amountDiff: number): Account[] {
+  const cashAccount = accounts.find((a) => a.available);
+  if (!cashAccount || amountDiff === 0) return accounts;
+
+  return accounts.map((a) =>
+    a.id === cashAccount.id
+      ? { ...a, balance: a.balance + amountDiff }
+      : a
+  );
+}
+
+function calculateCashDelta(original: FinanceEntry, next: FinanceEntry): number {
+  const originalEffect = original.kind === "income"
+    ? (isSettled(original) ? original.amount : 0)
+    : (isSettled(original) && original.paidBy !== "father" ? -original.amount : 0);
+  const nextEffect = next.kind === "income"
+    ? (isSettled(next) ? next.amount : 0)
+    : (isSettled(next) && next.paidBy !== "father" ? -next.amount : 0);
+  return nextEffect - originalEffect;
+}
+
+function parseInstallmentLabel(installment?: string): { installmentNumber?: number; installmentTotal?: number } {
+  if (!installment) return {};
+  const clean = installment.replace("?", "").trim();
+  const match = clean.match(/^(\d+)\/(\d+)$/);
+  if (!match) return {};
+  return {
+    installmentNumber: Number(match[1]),
+    installmentTotal: Number(match[2]),
+  };
+}
+
+function normalizeInstallmentTitle(title: string): string {
+  return title.replace(/\s+\d+\/\d+\??$/, "").trim();
+}
+
+function getInstallmentTargets(state: FinanceState, original: FinanceEntry, scope: InstallmentEditScope): FinanceEntry[] {
+  if (!original.installment || scope === "single") {
+    return [original];
+  }
+
+  const baseTitle = normalizeInstallmentTitle(original.title);
+  const baseAccount = original.account?.toLowerCase() ?? "";
+  const originalInstallment = parseInstallmentLabel(original.installment);
+
+  const series = state.entries.filter((entry) => {
+    if (!entry.installment) return false;
+    if (entry.kind !== original.kind) return false;
+    if ((entry.account?.toLowerCase() ?? "") !== baseAccount) return false;
+    if (normalizeInstallmentTitle(entry.title) !== baseTitle) return false;
+
+    const parsed = parseInstallmentLabel(entry.installment);
+    if (originalInstallment.installmentTotal && parsed.installmentTotal && parsed.installmentTotal !== originalInstallment.installmentTotal) {
+      return false;
+    }
+    return true;
+  });
+
+  if (scope === "all") return series;
+
+  return series.filter((entry) => {
+    const parsed = parseInstallmentLabel(entry.installment);
+    if (originalInstallment.installmentNumber && parsed.installmentNumber) {
+      return parsed.installmentNumber >= originalInstallment.installmentNumber;
+    }
+    return entry.dueDate >= original.dueDate;
+  });
+}
+
+function buildUpdatedEntry(base: FinanceEntry, updated: Omit<FinanceEntry, "id">, preserveSchedule: boolean): FinanceEntry {
+  const next: FinanceEntry = {
+    ...base,
+    ...updated,
+    id: base.id,
+    origin: updated.origin ?? base.origin,
+  };
+
+  if (preserveSchedule) {
+    next.title = base.installment ? `${normalizeInstallmentTitle(updated.title)} ${base.installment}` : updated.title;
+    next.dueDate = base.dueDate;
+    next.status = base.status;
+    next.paymentDate = base.paymentDate;
+    next.installment = base.installment;
+    next.installmentNumber = base.installmentNumber;
+    next.installmentTotal = base.installmentTotal;
+    next.invoiceMonth = base.invoiceMonth;
+    next.invoiceId = base.invoiceId;
+    next.transactionType = base.transactionType;
+    next.includeInSpending = base.includeInSpending;
+    next.estimatedDate = base.estimatedDate;
+    next.isOfficial = updated.isOfficial ?? base.isOfficial;
+    next.dataQuality = updated.dataQuality ?? base.dataQuality;
+  }
+
+  return next;
+}
+
 export const financeCommandService = {
   createEntry(
     state: FinanceState,
@@ -32,10 +132,9 @@ export const financeCommandService = {
       id: `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
     };
 
-    // Ajustar caixa se o lançamento for criado já liquidado
     let nextAccounts = [...state.accounts];
-    const isSettled = newEntry.status === "recebido" || newEntry.status === "realizado";
-    if (isSettled) {
+    const settled = isSettled(newEntry);
+    if (settled) {
       nextAccounts = adjustCashBalance(nextAccounts, newEntry.kind, newEntry.paidBy, newEntry.amount);
     }
 
@@ -46,18 +145,14 @@ export const financeCommandService = {
       updatedAt: new Date().toISOString(),
     };
 
-    // Validar integridade antes de salvar
     const issues = validateDataIntegrity(nextState);
     const criticals = issues.filter((i) => i.type === "error");
     if (criticals.length > 0) {
       throw new Error(`Erro de integridade ao criar lançamento: ${criticals[0].message}`);
     }
 
-    // Salvar e atualizar estado
     financeRepository.saveState(nextState);
     setState(nextState);
-
-    // Auditoria
     recordAudit(newEntry.id, "created", [], newEntry);
 
     return newEntry;
@@ -78,8 +173,7 @@ export const financeCommandService = {
         id: `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       };
 
-      const isSettled = newEntry.status === "recebido" || newEntry.status === "realizado";
-      if (isSettled) {
+      if (isSettled(newEntry)) {
         nextAccounts = adjustCashBalance(nextAccounts, newEntry.kind, newEntry.paidBy, newEntry.amount);
       }
 
@@ -94,18 +188,15 @@ export const financeCommandService = {
       updatedAt: new Date().toISOString(),
     };
 
-    // Validar integridade
     const issues = validateDataIntegrity(nextState);
     const criticals = issues.filter((i) => i.type === "error");
     if (criticals.length > 0) {
       throw new Error(`Erro de integridade ao criar lançamentos: ${criticals[0].message}`);
     }
 
-    // Salvar e atualizar estado
     financeRepository.saveState(nextState);
     setState(nextState);
 
-    // Auditoria
     for (const ne of createdList) {
       recordAudit(ne.id, "created", [], ne);
     }
@@ -117,73 +208,90 @@ export const financeCommandService = {
     state: FinanceState,
     entryId: string,
     updated: Omit<FinanceEntry, "id">,
-    setState: React.Dispatch<React.SetStateAction<FinanceState>>
+    setState: React.Dispatch<React.SetStateAction<FinanceState>>,
+    installmentScope: InstallmentEditScope = "single"
   ): FinanceEntry {
     const original = state.entries.find((e) => e.id === entryId);
     if (!original) throw new Error("Lançamento não encontrado.");
 
-    const newEntry: FinanceEntry = { ...updated, id: entryId };
+    const buildChanges = (before: FinanceEntry, after: FinanceEntry) => {
+      const changes: Array<{ field: string; oldValue: any; newValue: any }> = [];
+      Object.keys(before).forEach((k) => {
+        const key = k as keyof FinanceEntry;
+        if (before[key] !== after[key]) {
+          changes.push({ field: key, oldValue: before[key], newValue: after[key] });
+        }
+      });
+      return changes;
+    };
 
-    // Calcular diferença de caixa
-    let balanceDiff = 0;
-    if (original.kind === "income" && original.status === "recebido" && newEntry.status !== "recebido") {
-      balanceDiff -= original.amount;
-    } else if (original.kind === "income" && original.status !== "recebido" && newEntry.status === "recebido") {
-      balanceDiff += newEntry.amount;
-    } else if (original.kind === "income" && original.status === "recebido" && newEntry.status === "recebido") {
-      balanceDiff += (newEntry.amount - original.amount);
+    if (!original.installment || installmentScope === "single") {
+      const newEntry = buildUpdatedEntry(original, updated, false);
+      let paymentDate = newEntry.paymentDate || original.paymentDate;
+      if (isSettled(newEntry) && !isSettled(original)) {
+        paymentDate = new Date().toLocaleDateString("sv-SE");
+      } else if (!isSettled(newEntry)) {
+        paymentDate = undefined;
+      }
+      newEntry.paymentDate = paymentDate;
+
+      const nextAccounts = applyCashDelta([...state.accounts], calculateCashDelta(original, newEntry));
+      const nextState = {
+        ...state,
+        accounts: nextAccounts,
+        entries: state.entries.map((e) => (e.id === entryId ? newEntry : e)),
+        updatedAt: new Date().toISOString(),
+      };
+
+      const issues = validateDataIntegrity(nextState);
+      const criticals = issues.filter((i) => i.type === "error");
+      if (criticals.length > 0) {
+        throw new Error(`Erro de integridade ao editar lançamento: ${criticals[0].message}`);
+      }
+
+      financeRepository.saveState(nextState);
+      setState(nextState);
+      recordAudit(entryId, "updated", buildChanges(original, newEntry), newEntry);
+      return newEntry;
     }
 
-    if (original.kind === "expense" && original.paidBy !== "father" && original.status === "realizado" && newEntry.status !== "realizado") {
-      balanceDiff += original.amount;
-    } else if (original.kind === "expense" && newEntry.paidBy !== "father" && original.status !== "realizado" && newEntry.status === "realizado") {
-      balanceDiff -= newEntry.amount;
-    } else if (original.kind === "expense" && original.paidBy !== "father" && newEntry.paidBy !== "father" && original.status === "realizado" && newEntry.status === "realizado") {
-      balanceDiff -= (newEntry.amount - original.amount);
-    }
+    const targets = getInstallmentTargets(state, original, installmentScope);
+    const targetIds = new Set(targets.map((entry) => entry.id));
+    const updatedTargets = new Map<string, FinanceEntry>();
+    let cashDelta = 0;
 
-    const nextAccounts = adjustCashBalance([...state.accounts], original.kind, original.paidBy, balanceDiff);
+    const nextEntries = state.entries.map((entry) => {
+      if (!targetIds.has(entry.id)) return entry;
+      const nextEntry = buildUpdatedEntry(entry, updated, true);
+      cashDelta += calculateCashDelta(entry, nextEntry);
+      updatedTargets.set(entry.id, nextEntry);
+      return nextEntry;
+    });
 
-    // Ajustar data de pagamento de forma inteligente
-    let paymentDate = newEntry.paymentDate || original.paymentDate;
-    if ((newEntry.status === "recebido" || newEntry.status === "realizado") && 
-        !(original.status === "recebido" || original.status === "realizado")) {
-      paymentDate = new Date().toLocaleDateString("sv-SE");
-    } else if (newEntry.status !== "recebido" && newEntry.status !== "realizado") {
-      paymentDate = undefined;
-    }
-    newEntry.paymentDate = paymentDate;
-
+    const nextAccounts = applyCashDelta([...state.accounts], cashDelta);
     const nextState = {
       ...state,
       accounts: nextAccounts,
-      entries: state.entries.map((e) => (e.id === entryId ? newEntry : e)),
+      entries: nextEntries,
       updatedAt: new Date().toISOString(),
     };
 
-    // Validar integridade
     const issues = validateDataIntegrity(nextState);
     const criticals = issues.filter((i) => i.type === "error");
     if (criticals.length > 0) {
       throw new Error(`Erro de integridade ao editar lançamento: ${criticals[0].message}`);
     }
 
-    // Salvar e atualizar estado
     financeRepository.saveState(nextState);
     setState(nextState);
 
-    // Auditoria com delta-changes
-    const changes: Array<{ field: string; oldValue: any; newValue: any }> = [];
-    Object.keys(original).forEach((k) => {
-      const key = k as keyof FinanceEntry;
-      if (original[key] !== newEntry[key]) {
-        changes.push({ field: key, oldValue: original[key], newValue: newEntry[key] });
-      }
-    });
+    for (const entry of targets) {
+      const nextEntry = updatedTargets.get(entry.id);
+      if (!nextEntry) continue;
+      recordAudit(entry.id, "updated", buildChanges(entry, nextEntry), nextEntry);
+    }
 
-    recordAudit(entryId, "updated", changes, newEntry);
-
-    return newEntry;
+    return updatedTargets.get(entryId) ?? original;
   },
 
   duplicateEntry(
@@ -211,13 +319,10 @@ export const financeCommandService = {
     const entry = state.entries.find((e) => e.id === entryId);
     if (!entry) throw new Error("Lançamento não encontrado.");
 
-    // Lixeira
     trashEntry(entry);
 
-    // Se o lançamento estava liquidado, reverter efeito de caixa
     let nextAccounts = [...state.accounts];
-    const isSettled = entry.status === "recebido" || entry.status === "realizado";
-    if (isSettled) {
+    if (isSettled(entry)) {
       nextAccounts = adjustCashBalance(nextAccounts, entry.kind, entry.paidBy, -entry.amount);
     }
 
@@ -228,11 +333,8 @@ export const financeCommandService = {
       updatedAt: new Date().toISOString(),
     };
 
-    // Salvar e atualizar estado
     financeRepository.saveState(nextState);
     setState(nextState);
-
-    // Auditoria
     recordAudit(entryId, "deleted", [], entry);
   },
 
@@ -241,10 +343,8 @@ export const financeCommandService = {
     entry: FinanceEntry,
     setState: React.Dispatch<React.SetStateAction<FinanceState>>
   ): void {
-    // Re-aplicar efeito de caixa se restaurado já liquidado
     let nextAccounts = [...state.accounts];
-    const isSettled = entry.status === "recebido" || entry.status === "realizado";
-    if (isSettled) {
+    if (isSettled(entry)) {
       nextAccounts = adjustCashBalance(nextAccounts, entry.kind, entry.paidBy, entry.amount);
     }
 
@@ -255,11 +355,8 @@ export const financeCommandService = {
       updatedAt: new Date().toISOString(),
     };
 
-    // Salvar e atualizar estado
     financeRepository.saveState(nextState);
     setState(nextState);
-
-    // Auditoria
     recordAudit(entry.id, "restored", [], entry);
   },
 
@@ -271,8 +368,8 @@ export const financeCommandService = {
     const entry = state.entries.find((e) => e.id === entryId);
     if (!entry) throw new Error("Lançamento não encontrado.");
 
-    if (entry.status === "recebido" || entry.status === "realizado") {
-      return entry; // Já liquidado
+    if (isSettled(entry)) {
+      return entry;
     }
 
     const newStatus = entry.kind === "income" ? "recebido" : "realizado";
@@ -291,11 +388,9 @@ export const financeCommandService = {
       updatedAt: new Date().toISOString(),
     };
 
-    // Salvar e atualizar estado
     financeRepository.saveState(nextState);
     setState(nextState);
 
-    // Auditoria
     recordAudit(entryId, "settled", [
       { field: "status", oldValue: entry.status, newValue: newStatus },
       { field: "paymentDate", oldValue: null, newValue: paymentDate },

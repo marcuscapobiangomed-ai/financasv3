@@ -47,7 +47,7 @@ import {
 import { initialFinanceState } from "@/lib/seed";
 import { brl, commitmentsByMonth, formatDate, getSummary, monthSeries, parseCsv, spendingByCategory, isEntryInPeriod, monthLabel, getSafeToSpend, getRecommendations, getGoalScenarios, getFinancialHealth } from "@/lib/finance";
 import { buildInvoiceView } from "@/lib/invoice";
-import type { FinanceEntry, FinanceState, ViewKey, DataQuality, EntryStatus } from "@/lib/types";
+import type { FinanceEntry, FinanceState, ViewKey, DataQuality, EntryStatus, InstallmentEditScope } from "@/lib/types";
 import type { Recommendation } from "@/lib/finance";
 import { PanelSkeleton, StatCardSkeleton, TableSkeleton, HeroSkeleton } from "@/components/skeleton";
 import { logger, type LogCategory, type LogLevel } from "@/lib/logger";
@@ -207,6 +207,7 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
   const [state, setState] = useState<FinanceState>(initialFinanceState);
   const [view, setView] = useState<ViewKey>("overview");
   const [hydrated, setHydrated] = useState(false);
+  const [urlInitialized, setUrlInitialized] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [entryModalOpen, setEntryModalOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -363,6 +364,7 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
     if (urlSearch) {
       setSearch(urlSearch);
     }
+    setUrlInitialized(true);
 
     function handlePopState(event: PopStateEvent) {
       if (event.state) {
@@ -378,7 +380,7 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
 
   // Synchronize state to URL on change
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !urlInitialized) return;
     const params = new URLSearchParams(window.location.search);
     const currentView = params.get("view");
     const currentPeriod = params.get("period");
@@ -398,7 +400,7 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
         window.history.replaceState({ view, selectedPeriod, search }, "", newUrl);
       }
     }
-  }, [view, selectedPeriod, search, hydrated]);
+  }, [view, selectedPeriod, search, hydrated, urlInitialized]);
 
   // Track page views
   useEffect(() => {
@@ -448,6 +450,20 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
   const freeNow = Math.max(0, summary.availableCash + summary.pendingIncome - summary.pendingExpenses);
   const goalGap = Math.max(0, state.goal - summary.patrimony);
   const safeToSpendData = getSafeToSpend(state, todayStr, safetyMargin);
+  const cardsAuditSnapshot = useMemo(() => {
+    const unicredView = buildInvoiceView(state, "Unicred", selectedPeriod);
+    const nubankView = buildInvoiceView(state, "Nubank", selectedPeriod);
+    const futureInstallments = state.entries
+      .filter((entry) => entry.kind === "expense" && entry.installment && entry.status !== "realizado")
+      .reduce((sum, entry) => sum + entry.amount, 0);
+
+    return {
+      cardsSubtotal: unicredView.identifiedSubtotal + nubankView.identifiedSubtotal,
+      unicredSubtotal: unicredView.identifiedSubtotal,
+      nubankSubtotal: nubankView.identifiedSubtotal,
+      futureInstallments,
+    };
+  }, [state, selectedPeriod]);
   const recommendations = getRecommendations(state, todayStr, safeToSpendData.safeToSpend, safetyMargin);
   const health = getFinancialHealth(state, todayStr, safeToSpendData.safeToSpend);
 
@@ -515,11 +531,11 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
     }
   }
 
-  function updateEntry(id: string, updated: Omit<FinanceEntry, "id">) {
+  function updateEntry(id: string, updated: Omit<FinanceEntry, "id">, installmentScope: InstallmentEditScope = "single") {
     try {
       const origin = updated.origin || state.entries.find(e => e.id === id)?.origin || ("manual" as const);
       const updatedWithOrigin = { ...updated, origin };
-      financeCommandService.updateEntry(state, id, updatedWithOrigin, setState);
+      financeCommandService.updateEntry(state, id, updatedWithOrigin, setState, installmentScope);
       analytics.task("update_entry", { kind: updated.kind });
       pushToast(`Lançamento atualizado.`, "info");
       setEditingEntry(null);
@@ -767,6 +783,19 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
             <CalculationAudit
               state={state}
               selectedPeriod={selectedPeriod}
+              today={todayStr}
+              safetyMargin={safetyMargin}
+              snapshot={{
+                patrimony: summary.patrimony,
+                reserve: summary.reserve,
+                pendingIncome: summary.pendingIncome,
+                pendingExpenses: summary.pendingExpenses,
+                safeToSpend: safeToSpendData.safeToSpend,
+                cardsSubtotal: cardsAuditSnapshot.cardsSubtotal,
+                unicredSubtotal: cardsAuditSnapshot.unicredSubtotal,
+                nubankSubtotal: cardsAuditSnapshot.nubankSubtotal,
+                futureInstallments: cardsAuditSnapshot.futureInstallments,
+              }}
             />
           )}
         </div>
@@ -795,7 +824,7 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
       </nav>
 
       {entryModalOpen && <EntryModal onClose={() => setEntryModalOpen(false)} onSubmit={addEntry} today={todayStr} />}
-      {editingEntry && <EntryModal onClose={() => setEditingEntry(null)} onSubmit={(entry) => { if (!Array.isArray(entry)) updateEntry(editingEntry.id, entry); }} initialEntry={editingEntry} today={todayStr} setHistoryModalEntry={setHistoryModalEntry} />}
+      {editingEntry && <EntryModal onClose={() => setEditingEntry(null)} onSubmit={(entry, installmentScope) => { if (!Array.isArray(entry)) updateEntry(editingEntry.id, entry, installmentScope); }} initialEntry={editingEntry} today={todayStr} setHistoryModalEntry={setHistoryModalEntry} />}
       {calculationMemoryMetric && (
         <CalculationMemoryModal
           metric={calculationMemoryMetric}
@@ -1763,7 +1792,7 @@ function addDays(dateStr: string, days: number): string {
 
 function EntryModal({ onClose, onSubmit, initialEntry, today, setHistoryModalEntry }: {
   onClose: () => void;
-  onSubmit: (entry: Omit<FinanceEntry, "id"> | Omit<FinanceEntry, "id">[]) => void;
+  onSubmit: (entry: Omit<FinanceEntry, "id"> | Omit<FinanceEntry, "id">[], installmentScope?: InstallmentEditScope) => void;
   initialEntry?: FinanceEntry;
   today: string;
   setHistoryModalEntry?: (entry: FinanceEntry) => void;
@@ -1771,6 +1800,7 @@ function EntryModal({ onClose, onSubmit, initialEntry, today, setHistoryModalEnt
   const [kind, setKind] = useState<FinanceEntry["kind"]>(initialEntry?.kind ?? "expense");
   const [showAdvanced, setShowAdvanced] = useState(!!initialEntry?.installment || !!initialEntry?.note);
   const [repeatType, setRepeatType] = useState<"single" | "installment" | "recurring">("single");
+  const [installmentScope, setInstallmentScope] = useState<InstallmentEditScope>("single");
   const [amount, setAmount] = useState<string>(initialEntry?.amount ? String(initialEntry.amount) : "");
   const [installmentsCount, setInstallmentsCount] = useState(12);
   const [currentInstallment, setCurrentInstallment] = useState(1);
@@ -1847,7 +1877,7 @@ function EntryModal({ onClose, onSubmit, initialEntry, today, setHistoryModalEnt
         dueDate: dateVal,
         status: form.get("status") as EntryStatus,
         installment: String(form.get("installment") || "") || undefined
-      });
+      }, initialEntry.installment ? installmentScope : "single");
       return;
     }
 
@@ -2071,9 +2101,9 @@ function EntryModal({ onClose, onSubmit, initialEntry, today, setHistoryModalEnt
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
               <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--muted)" }}>Alcance da edição</span>
               <div className="type-toggle" role="group" aria-label="Alcance da edição" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: "2px", height: "36px" }}>
-                <button type="button" className="active" style={{ height: "30px", fontSize: "11px" }}>Apenas esta</button>
-                <button type="button" style={{ height: "30px", fontSize: "11px" }}>Esta e próximas</button>
-                <button type="button" style={{ height: "30px", fontSize: "11px" }}>Toda compra</button>
+                <button type="button" className={installmentScope === "single" ? "active" : ""} onClick={() => setInstallmentScope("single")} style={{ height: "30px", fontSize: "11px" }}>Apenas esta</button>
+                <button type="button" className={installmentScope === "current_and_next" ? "active" : ""} onClick={() => setInstallmentScope("current_and_next")} style={{ height: "30px", fontSize: "11px" }}>Esta e próximas</button>
+                <button type="button" className={installmentScope === "all" ? "active" : ""} onClick={() => setInstallmentScope("all")} style={{ height: "30px", fontSize: "11px" }}>Toda compra</button>
               </div>
             </div>
           )}
@@ -2185,7 +2215,7 @@ function QualityPage({ state, selectedPeriod, pushToast }: { state: FinanceState
       <section style={{ marginBottom: "8px" }}>
         <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Qualidade de Uso</span>
       </section>
-      <section className="dashboard-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+      <section className="dashboard-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
         <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
           <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Taxa conclusão</span>
           <strong style={{ fontSize: "28px" }}>{(stats.taskCompletionRate * 100).toFixed(0)}%</strong>
@@ -2207,7 +2237,7 @@ function QualityPage({ state, selectedPeriod, pushToast }: { state: FinanceState
       <section style={{ marginTop: "24px", marginBottom: "8px" }}>
         <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Qualidade Financeira</span>
       </section>
-      <section className="dashboard-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+      <section className="dashboard-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
         <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
           <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Faturas reconhecidas</span>
           <strong style={{ fontSize: "28px", color: invoicesWarning ? "var(--warning)" : "var(--success)" }}>{invoicesRecognized} de {invoicesTotal}</strong>
@@ -2236,7 +2266,7 @@ function QualityPage({ state, selectedPeriod, pushToast }: { state: FinanceState
                 </span>
                 {currentClose.closedAt && <span style={{ fontSize: "11px", color: "var(--muted)" }}>Fechado em {new Date(currentClose.closedAt).toLocaleString("pt-BR")}</span>}
               </div>
-              <div style={{ display: "grid", gap: "8px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px" }}>
                 {[
                   { key: "invoicesImported" as const, label: "Faturas importadas" },
                   { key: "balancesVerified" as const, label: "Saldos conferidos" },
@@ -2245,7 +2275,7 @@ function QualityPage({ state, selectedPeriod, pushToast }: { state: FinanceState
                   { key: "spendingReviewed" as const, label: "Gastos revisados" },
                   { key: "alertsReviewed" as const, label: "Alertas revisados" },
                 ].map((item) => (
-                  <label key={item.key} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", cursor: "pointer" }}>
+                  <label key={item.key} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", cursor: "pointer", minHeight: "28px" }}>
                     <input
                       type="checkbox"
                       checked={currentClose.checklist[item.key]}

@@ -2,18 +2,24 @@ import React, { useMemo } from "react";
 import { ShieldCheck, AlertTriangle, AlertCircle } from "lucide-react";
 import type { FinanceState } from "@/lib/types";
 import { brl } from "@/lib/finance";
-import { auditDisplayedValues } from "@/lib/selectors";
+import { auditDisplayedValues, type CalculationAuditSnapshot } from "@/lib/selectors";
 
 export function CalculationAudit({
   state,
   selectedPeriod,
+  today,
+  safetyMargin,
+  snapshot,
 }: {
   state: FinanceState;
   selectedPeriod: string;
+  today: string;
+  safetyMargin: number;
+  snapshot: CalculationAuditSnapshot;
 }) {
   const reports = useMemo(() => {
-    return auditDisplayedValues(state, selectedPeriod);
-  }, [state, selectedPeriod]);
+    return auditDisplayedValues(state, selectedPeriod, snapshot, today, safetyMargin);
+  }, [state, selectedPeriod, snapshot, today, safetyMargin]);
 
   const hasDivergences = reports.some((r) => r.status === "divergente");
 
