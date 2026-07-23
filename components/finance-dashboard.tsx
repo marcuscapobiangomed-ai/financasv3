@@ -55,7 +55,7 @@ import { validateFile, sanitizeString, checkRateLimit, RATE_LIMIT } from "@/lib/
 import { exportCSV, exportJSON, exportFullBackup, createBackup, loadBackupList, restoreFromBackup, importFromJSON, type BackupMeta } from "@/lib/backup";
 import { saveFormDraft, loadFormDraft, clearFormDraft, saveImportChunk, loadImportChunk, clearImportChunk, isOnline, getConnectionStatus, type ConnectionStatus } from "@/lib/fault-tolerance";
 import { analytics } from "@/lib/analytics";
-import { getMonthClose, saveChecklist, closeMonth, reopenMonth, getAllCloses, type MonthClose, type ClosingChecklist } from "@/lib/closing";
+import { getMonthClose, saveChecklist, closeMonth, reopenMonth, type MonthClose } from "@/lib/closing";
 import { recordAudit, getAuditTrail, getAuditStats, getAllAuditEntries, type AuditEntry } from "@/lib/audit";
 import { trashEntry, restoreFromTrash, getTrashItems, getTrashCount, emptyTrash, type TrashItem } from "@/lib/trash";
 
@@ -86,22 +86,38 @@ const NAV_GROUPS = [
     { key: "overview" as ViewKey, label: "Visão geral", icon: LayoutDashboard },
     { key: "spending" as ViewKey, label: "Gastos", icon: ReceiptText },
     { key: "receivables" as ViewKey, label: "A receber", icon: HandCoins },
-  ]},
-  { label: "Compromissos", items: [
     { key: "cards" as ViewKey, label: "Cartões e parcelas", icon: CreditCard },
-  ]},
-  { label: "Patrimônio", items: [
     { key: "goal" as ViewKey, label: "Meta R$ 10 mil", icon: Goal },
   ]},
-  { label: "Sistema", items: [
+  { label: "Dados", items: [
+    { key: "all_entries" as ViewKey, label: "Todos os lançamentos", icon: ClipboardList },
     { key: "imports" as ViewKey, label: "Importar", icon: Upload },
+    { key: "corrections" as ViewKey, label: "Corrigir dados", icon: ListTodo },
+  ]},
+  { label: "Confiabilidade", items: [
+    { key: "quality" as ViewKey, label: "Qualidade dos dados", icon: Gauge },
+    { key: "calculation_audit" as ViewKey, label: "Auditoria de cálculos", icon: ShieldCheck },
     { key: "tools" as ViewKey, label: "Exportar e backup", icon: Database },
     { key: "logs" as ViewKey, label: "Monitoramento", icon: ListTodo },
-    { key: "quality" as ViewKey, label: "Qualidade", icon: Gauge },
-    { key: "corrections" as ViewKey, label: "Central Correções", icon: ClipboardList },
-    { key: "calculation_audit" as ViewKey, label: "Auditoria de Cálculos", icon: ShieldCheck },
+    { key: "recovery_diagnostics" as ViewKey, label: "Recuperação", icon: History },
   ]},
 ];
+
+const PAGE_META: Record<ViewKey, { eyebrow: string; description: string }> = {
+  overview: { eyebrow: "Decisão do mês", description: "Saldo, movimentos mais importantes e o que precisa da sua atenção agora." },
+  spending: { eyebrow: "Saídas", description: "Para onde o dinheiro foi, quanto ainda falta pagar e quais categorias mais pesam." },
+  receivables: { eyebrow: "Entradas", description: "De quem o dinheiro vem, quanto está confirmado e quando deve entrar." },
+  cards: { eyebrow: "Compromissos", description: "Faturas atuais, parcelas futuras e impacto mensal das compras já feitas." },
+  goal: { eyebrow: "Patrimônio", description: "Progresso da meta, ritmo de aportes e prazo estimado para alcançá-la." },
+  imports: { eyebrow: "Entrada de dados", description: "Inclua lançamentos por arquivo e revise tudo antes de confirmar." },
+  tools: { eyebrow: "Proteção dos dados", description: "Exporte, crie cópias de segurança ou restaure um backup anterior." },
+  logs: { eyebrow: "Saúde técnica", description: "Acompanhe erros, avisos e eventos do funcionamento do aplicativo." },
+  quality: { eyebrow: "Confiabilidade", description: "Veja se categorias, faturas e informações estão completas para fechar o mês." },
+  corrections: { eyebrow: "Pendências", description: "Encontre dados incompletos ou inconsistentes e corrija cada lançamento." },
+  recovery_diagnostics: { eyebrow: "Recuperação", description: "Compare versões, localize itens ausentes e restaure dados com segurança." },
+  all_entries: { eyebrow: "Base financeira", description: "Consulte e filtre todos os lançamentos sem resumir ou esconder detalhes." },
+  calculation_audit: { eyebrow: "Verificação", description: "Confira as fórmulas e os valores que alimentam os indicadores do aplicativo." },
+};
 
 const BOTTOM_NAV = [
   { key: "overview" as ViewKey, label: "Início", icon: LayoutDashboard },
@@ -426,7 +442,6 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
     return state.entries.filter((e) => isEntryInPeriod(e, selectedPeriod));
   }, [state.entries, selectedPeriod]);
 
-  const categorySpend = useMemo(() => spendingByCategory(entriesInPeriod), [entriesInPeriod]);
   const commitments = useMemo(() => commitmentsByMonth(state.entries), [state.entries]);
 
   const entriesFiltered = useMemo(() => {
@@ -447,7 +462,6 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
       .reduce((sum, entry) => sum + entry.amount, 0);
   }, [state.entries, selectedPeriod]);
 
-  const freeNow = Math.max(0, summary.availableCash + summary.pendingIncome - summary.pendingExpenses);
   const goalGap = Math.max(0, state.goal - summary.patrimony);
   const safeToSpendData = getSafeToSpend(state, todayStr, safetyMargin);
   const cardsAuditSnapshot = useMemo(() => {
@@ -613,6 +627,7 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
   }
 
   const title = NAV_GROUPS.flatMap((g) => g.items).find((item) => item.key === view)?.label ?? "Visão geral";
+  const pageMeta = PAGE_META[view];
 
   return (
     <div className="app-shell">
@@ -651,7 +666,11 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
       <main className="main-content">
         <header className="topbar">
           <button className="mobile-menu" aria-label="Abrir menu" onClick={() => setMobileNavOpen(true)}><Menu /></button>
-          <div className="page-heading"><span>Dashboard pessoal</span><h1>{title}</h1></div>
+          <div className="page-heading">
+            <span>{pageMeta.eyebrow}</span>
+            <h1>{title}</h1>
+            <p>{pageMeta.description}</p>
+          </div>
           <div className="topbar-actions">
             {/* Supabase Connection State and Auth */}
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginRight: "12px" }}>
@@ -726,9 +745,7 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
           {view === "overview" && (
             <Overview
               state={state}
-              summary={summary}
               cashflow={cashflow}
-              freeNow={freeNow}
               currentIncome={currentIncome}
               currentExpenses={currentExpenses}
               settleEntry={settleEntry}
@@ -737,15 +754,17 @@ function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: st
               recommendations={recommendations}
               health={health}
               onOpenSafeToSpendDetails={() => setCalculationMemoryMetric("safeToSpend")}
-              onOpenCalculationMemory={(metric) => setCalculationMemoryMetric(metric)}
               safetyMargin={safetyMargin}
               currentClose={getMonthClose(selectedPeriod)}
               onNavigateQuality={() => setView("quality")}
+              onNavigateReceivables={() => setView("receivables")}
+              onNavigateSpending={() => setView("spending")}
+              onNavigateCards={() => setView("cards")}
             />
           )}
           {view === "receivables" && <Receivables entries={entriesFiltered.filter((entry) => entry.kind === "income")} settleEntry={settleEntry} removeEntry={removeEntry} onEdit={setEditingEntry} today={todayStr} onAddEntry={() => setEntryModalOpen(true)} updateEntry={updateEntry} setHistoryModalEntry={setHistoryModalEntry} />}
-          {view === "cards" && <CardsPage entries={entriesFiltered.filter((entry) => entry.kind === "expense")} commitments={commitments} state={state} selectedPeriod={selectedPeriod} />}
-          {view === "spending" && <SpendingPage entries={entriesFiltered.filter((entry) => entry.kind === "expense")} categorySpend={categorySpend} settleEntry={settleEntry} removeEntry={removeEntry} onEdit={setEditingEntry} today={todayStr} updateEntry={updateEntry} setHistoryModalEntry={setHistoryModalEntry} state={state} selectedPeriod={selectedPeriod} />}
+          {view === "cards" && <CardsPage commitments={commitments} state={state} selectedPeriod={selectedPeriod} />}
+          {view === "spending" && <SpendingPage entries={entriesFiltered.filter((entry) => entry.kind === "expense")} settleEntry={settleEntry} removeEntry={removeEntry} onEdit={setEditingEntry} today={todayStr} updateEntry={updateEntry} setHistoryModalEntry={setHistoryModalEntry} state={state} selectedPeriod={selectedPeriod} />}
           {view === "goal" && <GoalPage state={state} summary={summary} goalGap={goalGap} cashflow={cashflow} setState={setState} today={todayStr} />}
           {view === "imports" && (
             <ImportPage
@@ -1004,9 +1023,7 @@ function fieldLabel(field: string): string {
 
 function Overview({
   state,
-  summary,
   cashflow,
-  freeNow,
   currentIncome,
   currentExpenses,
   settleEntry,
@@ -1015,15 +1032,15 @@ function Overview({
   recommendations,
   health,
   onOpenSafeToSpendDetails,
-  onOpenCalculationMemory,
   safetyMargin,
   currentClose,
   onNavigateQuality,
+  onNavigateReceivables,
+  onNavigateSpending,
+  onNavigateCards,
 }: {
   state: FinanceState;
-  summary: ReturnType<typeof getSummary>;
   cashflow: ReturnType<typeof monthSeries>;
-  freeNow: number;
   currentIncome: number;
   currentExpenses: number;
   settleEntry: (entry: FinanceEntry) => void;
@@ -1032,11 +1049,27 @@ function Overview({
   recommendations: Recommendation[];
   health: ReturnType<typeof getFinancialHealth>;
   onOpenSafeToSpendDetails: () => void;
-  onOpenCalculationMemory: (metric: "patrimony" | "reserve" | "receivables" | "safeToSpend" | "expenses") => void;
   safetyMargin: number;
   currentClose?: MonthClose;
   onNavigateQuality?: () => void;
+  onNavigateReceivables: () => void;
+  onNavigateSpending: () => void;
+  onNavigateCards: () => void;
 }) {
+  const periodEntries = state.entries.filter((entry) => isEntryInPeriod(entry, selectedPeriod));
+  const periodIncome = periodEntries.filter((entry) => entry.kind === "income");
+  const periodExpenses = periodEntries.filter((entry) => entry.kind === "expense" && entry.paidBy !== "father");
+  const receivedIncome = periodIncome.filter((entry) => entry.status === "recebido").reduce((sum, entry) => sum + entry.amount, 0);
+  const openIncome = periodIncome.filter((entry) => entry.status !== "recebido").reduce((sum, entry) => sum + entry.amount, 0);
+  const paidExpenses = periodExpenses.filter((entry) => entry.status === "realizado").reduce((sum, entry) => sum + entry.amount, 0);
+  const openExpenses = periodExpenses.filter((entry) => entry.status !== "realizado").reduce((sum, entry) => sum + entry.amount, 0);
+  const incomeSources = [...new Set(periodIncome.map((entry) => entry.source || entry.title))]
+    .map((source) => ({ source, amount: periodIncome.filter((entry) => (entry.source || entry.title) === source).reduce((sum, entry) => sum + entry.amount, 0) }))
+    .sort((a, b) => b.amount - a.amount);
+  const expenseCategories = spendingByCategory(periodExpenses).sort((a, b) => b.value - a.value);
+  const topIncomeSource = incomeSources[0];
+  const topExpenseCategory = expenseCategories[0];
+  const projectedBalance = currentIncome - currentExpenses;
   const upcoming = state.entries
     .filter((entry) => entry.status !== "recebido" && entry.status !== "realizado" && isEntryInPeriod(entry, selectedPeriod))
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
@@ -1078,53 +1111,45 @@ function Overview({
 
       <section className="stat-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
         <StatCard
-          title="Livre para gastar"
-          value={brl.format(safeToSpendData.safeToSpend)}
-          subtitle={`Seguro até ${formatDate(safeToSpendData.nextIncomeDate)}`}
-          icon={CircleDollarSign}
-          tone={safeToSpendData.safeToSpend >= 0 ? "positive" : "warning"}
-          onClick={onOpenSafeToSpendDetails}
-          tooltip="Caixa disponível + recebimentos confirmados até a data limite − contas e faturas − margem de segurança."
+          title="Entradas do período"
+          value={brl.format(currentIncome)}
+          subtitle={`${brl.format(receivedIncome)} recebidos · ${brl.format(openIncome)} a entrar`}
+          icon={ArrowUpRight}
+          tone="positive"
+          onClick={onNavigateReceivables}
+          tooltip="Todos os recebimentos cadastrados no período, separados entre realizados e ainda aguardados."
         />
-        <StatCard 
-          title="Patrimônio" 
-          value={brl.format(summary.patrimony)} 
-          subtitle="reserva + caixa disponível" 
-          icon={WalletCards} 
-          onClick={() => onOpenCalculationMemory("patrimony")}
-          tooltip="Soma total do Caixa disponível e da Reserva guardada. Clique para ver a memória de cálculo."
+        <StatCard
+          title="Saídas do seu caixa"
+          value={brl.format(currentExpenses)}
+          subtitle={`${brl.format(paidExpenses)} pagos · ${brl.format(openExpenses)} a pagar`}
+          icon={ArrowDownRight}
+          tone="warning"
+          onClick={onNavigateSpending}
+          tooltip="Despesas do período que impactam o seu caixa, sem valores pagos por terceiros."
         />
-        <StatCard 
-          title="Reserva" 
-          value={brl.format(summary.reserve)} 
-          subtitle="protegida, fora do consumo" 
-          icon={ShieldCheck} 
-          onClick={() => onOpenCalculationMemory("reserve")}
-          tooltip="Dinheiro guardado e protegido, separado do caixa de consumo mensal. Clique para ver a memória de cálculo."
-        />
-        <StatCard 
-          title="A receber" 
-          value={brl.format(summary.pendingIncome)} 
-          subtitle="confirmado e previsto" 
-          icon={ArrowUpRight} 
-          tone="positive" 
-          onClick={() => onOpenCalculationMemory("receivables")}
-          tooltip="Soma de recebimentos confirmados e previstos no período. Clique para ver a memória de cálculo."
+        <StatCard
+          title="Resultado projetado"
+          value={brl.format(projectedBalance)}
+          subtitle="entradas menos saídas cadastradas"
+          icon={Banknote}
+          tone={projectedBalance >= 0 ? "positive" : "warning"}
+          tooltip="Diferença entre todas as entradas e saídas cadastradas para o período."
         />
       </section>
 
       <section className="dashboard-grid dashboard-grid-primary">
-        <article className="panel panel-wide">
+        <article className="panel">
           <div className="panel-heading"><div><span>Fluxo projetado</span><h3>Entradas, compromissos e saldo mensal</h3></div><span className="soft-badge">Jul/26 — Jan/27</span></div>
           <div className="chart-wrap chart-large">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={cashflow} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+              <AreaChart data={cashflow} margin={{ top: 10, right: 10, left: 4, bottom: 0 }}>
                 <defs>
                   <linearGradient id="incomeGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ff7a18" stopOpacity={0.4}/><stop offset="95%" stopColor="#ff7a18" stopOpacity={0}/></linearGradient>
                 </defs>
                 <CartesianGrid stroke="#2a2d31" vertical={false} />
                 <XAxis dataKey="month" stroke="#8c9199" tickLine={false} axisLine={false} />
-                <YAxis stroke="#8c9199" tickLine={false} axisLine={false} tickFormatter={(value) => `R$${value}`} />
+                <YAxis width={58} stroke="#8c9199" tickLine={false} axisLine={false} tickFormatter={(value) => `R$${value}`} />
                 <Tooltip content={<ChartTooltip />} />
                 <Area type="monotone" dataKey="income" name="Entradas" stroke="#ff7a18" fill="url(#incomeGradient)" strokeWidth={3} />
                 <Line type="monotone" dataKey="expense" name="Compromissos" stroke="#d0d3d8" strokeWidth={2} dot={{ r: 3 }} />
@@ -1135,12 +1160,27 @@ function Overview({
           <div className="chart-note"><TrendingUp size={16} /><span>A projeção usa somente dados cadastrados. Nubank e Unicred já foram importados a partir dos lançamentos visíveis.</span></div>
         </article>
 
-        <article className="panel goal-panel">
-          <div className="panel-heading"><div><span>Meta principal</span><h3>R$ 10 mil</h3></div><Target size={22} /></div>
-          <div className="goal-ring" style={{ "--progress": `${summary.goalProgress * 3.6}deg` } as React.CSSProperties}>
-            <div><strong>{summary.goalProgress.toFixed(1).replace(".", ",")}%</strong><span>concluído</span></div>
+        <article className="panel money-route-panel">
+          <div className="panel-heading"><div><span>Leitura rápida</span><h3>O caminho do dinheiro</h3></div><CircleDollarSign size={20} /></div>
+          <div className="money-route">
+            <button type="button" onClick={onNavigateReceivables}>
+              <span>Maior origem</span>
+              <strong>{topIncomeSource?.source || "Sem entradas"}</strong>
+              <small>{brl.format(topIncomeSource?.amount || 0)}</small>
+            </button>
+            <div className="money-route-balance">
+              <ArrowUpRight size={17} />
+              <span>Saldo do período</span>
+              <strong>{brl.format(projectedBalance)}</strong>
+              <ArrowDownRight size={17} />
+            </div>
+            <button type="button" onClick={onNavigateSpending}>
+              <span>Maior destino</span>
+              <strong>{topExpenseCategory?.name || "Sem saídas"}</strong>
+              <small>{brl.format(topExpenseCategory?.value || 0)}</small>
+            </button>
           </div>
-          <div className="goal-values"><span><small>Atual</small><strong>{brl.format(summary.patrimony)}</strong></span><span><small>Falta</small><strong>{brl.format(Math.max(0, state.goal - summary.patrimony))}</strong></span></div>
+          <p className="panel-explainer">Este resumo mostra apenas os maiores grupos. Abra Entradas ou Gastos para ver todas as origens e destinos.</p>
         </article>
       </section>
 
@@ -1159,17 +1199,17 @@ function Overview({
         </article>
 
         <article className="panel">
-          <div className="panel-heading"><div><span>{monthLabel(selectedPeriod)}</span><h3>Resumo conhecido</h3></div><Banknote size={20} /></div>
-          <div className="summary-bars">
-            <div><span>Entradas previstas</span><strong>{brl.format(currentIncome)}</strong><div><i style={{ width: `${Math.min(100, (currentIncome / Math.max(currentIncome, currentExpenses, 1)) * 100)}%` }} /></div></div>
-            <div><span>Compromissos conhecidos</span><strong>{brl.format(currentExpenses)}</strong><div><i className="bar-muted" style={{ width: `${Math.min(100, (currentExpenses / Math.max(currentIncome, currentExpenses, 1)) * 100)}%` }} /></div></div>
+          <div className="panel-heading"><div><span>Próximas análises</span><h3>Abra o detalhe certo</h3></div><Gauge size={20} /></div>
+          <div className="page-shortcuts">
+            <button type="button" onClick={onNavigateReceivables}><ArrowUpRight size={18} /><span><strong>Origens das entradas</strong><small>Quem paga e quando entra</small></span></button>
+            <button type="button" onClick={onNavigateSpending}><ArrowDownRight size={18} /><span><strong>Destinos das saídas</strong><small>Categorias e lançamentos</small></span></button>
+            <button type="button" onClick={onNavigateCards}><CreditCard size={18} /><span><strong>Compromissos futuros</strong><small>Faturas e parcelas</small></span></button>
           </div>
-          <div className="decision-box"><span>Resultado provisório</span><strong>{brl.format(currentIncome - currentExpenses)}</strong><small>antes de gastos cotidianos ainda não cadastrados</small></div>
         </article>
       </section>
 
       <section className="dashboard-grid dashboard-grid-primary" style={{ marginTop: "24px" }}>
-        <article className="panel panel-wide">
+        <article className="panel">
           <div className="panel-heading"><div><span>Motor de decisão</span><h3>Recomendações e alertas inteligentes</h3></div><Gauge size={20} /></div>
           {recommendations.length > 0 ? (
             <div className="recommendations-panel">
@@ -1234,68 +1274,113 @@ function Receivables({ entries, settleEntry, removeEntry, onEdit, today, onAddEn
   setHistoryModalEntry?: (entry: FinanceEntry) => void;
 }) {
   const pending = entries.filter((entry) => entry.status !== "recebido");
+  const received = entries.filter((entry) => entry.status === "recebido");
+  const confirmed = pending.filter((entry) => entry.status === "a_receber_confirmado");
+  const forecast = pending.filter((entry) => entry.status === "a_receber_incerto" || entry.status === "projetado");
   const overdue = pending.filter((entry) => entry.dueDate < today);
   const total = pending.reduce((sum, entry) => sum + entry.amount, 0);
-  const bySource = [...new Map(entries.map((entry) => [entry.source ?? entry.title, 0])).keys()].map((source) => ({ source, amount: entries.filter((entry) => (entry.source ?? entry.title) === source).reduce((sum, entry) => sum + entry.amount, 0) })).sort((a, b) => b.amount - a.amount);
+  const bySource = [...new Set(pending.map((entry) => entry.source || entry.title))]
+    .map((source) => {
+      const sourceEntries = pending.filter((entry) => (entry.source || entry.title) === source);
+      return {
+        source,
+        amount: sourceEntries.reduce((sum, entry) => sum + entry.amount, 0),
+        count: sourceEntries.length,
+        nextDate: [...sourceEntries].sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0]?.dueDate,
+        confirmed: sourceEntries.filter((entry) => entry.status === "a_receber_confirmado").reduce((sum, entry) => sum + entry.amount, 0),
+      };
+    })
+    .sort((a, b) => b.amount - a.amount);
   return (
     <>
       <section className="decision-hero flex-col" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "16px", padding: "28px 32px", marginBottom: "24px" }}>
-        <span className="eyebrow"><HandCoins size={16} /> Fluxo de Receitas</span>
-        <h2 style={{ fontSize: "14px", fontWeight: 600, color: "var(--muted-2)", margin: 0 }}>Quanto tenho a receber no total?</h2>
+        <span className="eyebrow"><HandCoins size={16} /> Origens do dinheiro</span>
+        <h2 style={{ fontSize: "14px", fontWeight: 600, color: "var(--muted-2)", margin: 0 }}>Quanto ainda deve entrar?</h2>
         <strong style={{ fontSize: "38px", fontWeight: 800, color: "var(--text)", display: "block", margin: "6px 0", letterSpacing: "-0.02em" }}>{brl.format(total)}</strong>
         <p style={{ fontSize: "13px", color: "var(--muted)", margin: 0, lineHeight: "1.4" }}>
-          Existem <strong>{pending.length}</strong> recebimentos pendentes neste período. Desses, <strong>{overdue.length}</strong> estão com a data de vencimento atrasada.
+          {pending.length} recebimentos em aberto, vindos de {bySource.length} {bySource.length === 1 ? "origem" : "origens"}. Neste período, {brl.format(received.reduce((sum, entry) => sum + entry.amount, 0))} já foram recebidos.
         </p>
       </section>
 
       <section className="stat-grid stat-grid-three">
-        <StatCard 
-          title="A receber" 
-          value={brl.format(total)} 
-          subtitle={`${pending.length} em aberto`} 
-          icon={HandCoins} 
-          tone="positive" 
-          tooltip="Soma de recebimentos ainda não realizados neste período."
+        <StatCard
+          title="Confirmado"
+          value={brl.format(confirmed.reduce((sum, entry) => sum + entry.amount, 0))}
+          subtitle={`${confirmed.length} recebimentos com entrada esperada`}
+          icon={Check}
+          tone="positive"
+          tooltip="Valores em aberto marcados como recebimento confirmado."
         />
-        <StatCard 
-          title="Atrasados" 
-          value={brl.format(overdue.reduce((sum, entry) => sum + entry.amount, 0))} 
-          subtitle={`${overdue.length} vencidos`} 
-          icon={BellRing} 
-          tone={overdue.length ? "warning" : "default"} 
+        <StatCard
+          title="Previsto"
+          value={brl.format(forecast.reduce((sum, entry) => sum + entry.amount, 0))}
+          subtitle={`${forecast.length} valores ainda incertos`}
+          icon={TrendingUp}
+          tooltip="Valores projetados ou incertos; não devem ser tratados como dinheiro garantido."
+        />
+        <StatCard
+          title="Em atraso"
+          value={brl.format(overdue.reduce((sum, entry) => sum + entry.amount, 0))}
+          subtitle={`${overdue.length} ${overdue.length === 1 ? "recebimento vencido" : "recebimentos vencidos"}`}
+          icon={BellRing}
+          tone={overdue.length ? "warning" : "default"}
           tooltip="Recebimentos cuja data de vencimento é anterior a hoje e que ainda não foram marcados como recebidos."
-        />
-        <StatCard 
-          title="Fontes ativas" 
-          value={String(bySource.length)} 
-          subtitle="origens cadastradas" 
-          icon={CircleDollarSign} 
-          tooltip="Quantidade de clientes ou origens diferentes registradas."
         />
       </section>
       <section className="dashboard-grid dashboard-grid-primary">
-        <article className="panel panel-wide">
+        <article className="panel">
+          <div className="panel-heading"><div><span>Origem dos valores em aberto</span><h3>De quem o dinheiro vem</h3></div><span className="soft-badge">{bySource.length} {bySource.length === 1 ? "origem" : "origens"}</span></div>
+          {bySource.length === 0
+            ? <EmptyState title="Nenhum valor aguardando entrada" description="Adicione um recebimento para acompanhar sua origem e previsão." action={{ label: "Adicionar entrada", onClick: onAddEntry }} />
+            : <div className="source-breakdown">
+                {bySource.map((item) => (
+                  <div className="source-breakdown-row" key={item.source}>
+                    <div className="source-breakdown-main">
+                      <span className="source-avatar">{item.source.slice(0, 1).toUpperCase()}</span>
+                      <span><strong>{item.source}</strong><small>{item.count} {item.count === 1 ? "lançamento" : "lançamentos"} · próxima data {item.nextDate ? formatDate(item.nextDate) : "não informada"}</small></span>
+                    </div>
+                    <div className="source-breakdown-value">
+                      <strong>{brl.format(item.amount)}</strong>
+                      <small>{item.amount > 0 ? ((item.confirmed / item.amount) * 100).toFixed(0) : 0}% confirmado</small>
+                    </div>
+                    <div className="source-share"><i style={{ width: `${total > 0 ? (item.amount / total) * 100 : 0}%` }} /></div>
+                  </div>
+                ))}
+              </div>}
+        </article>
+        <article className="panel">
+          <div className="panel-heading"><div><span>Confiança da entrada</span><h3>Confirmado x previsto</h3></div><ShieldCheck size={20} /></div>
+          <div className="status-composition">
+            <div><span>Confirmado</span><strong>{brl.format(confirmed.reduce((sum, entry) => sum + entry.amount, 0))}</strong><i><b style={{ width: `${total > 0 ? (confirmed.reduce((sum, entry) => sum + entry.amount, 0) / total) * 100 : 0}%` }} /></i></div>
+            <div><span>Previsto ou incerto</span><strong>{brl.format(forecast.reduce((sum, entry) => sum + entry.amount, 0))}</strong><i><b className="muted-fill" style={{ width: `${total > 0 ? (forecast.reduce((sum, entry) => sum + entry.amount, 0) / total) * 100 : 0}%` }} /></i></div>
+          </div>
+          <p className="panel-explainer">Use os valores confirmados para decisões de curto prazo. Os previstos ajudam no planejamento, mas ainda podem mudar.</p>
+        </article>
+      </section>
+      <section className="dashboard-grid" style={{ gridTemplateColumns: "1fr", marginTop: "24px" }}>
+        <article className="panel">
           <div className="panel-heading"><div><span>Calendário de recebimentos</span><h3>Quem paga, quanto e quando</h3></div><span className="soft-badge">Somente valores cadastrados</span></div>
           {entries.length === 0
             ? <EmptyState title="Nenhum recebimento registrado neste período" description="Adicione entradas para acompanhar o que está por vir." action={{ label: "Adicionar entrada", onClick: onAddEntry }} />
-            : <EntryTable entries={entries.sort((a, b) => a.dueDate.localeCompare(b.dueDate))} settleEntry={settleEntry} removeEntry={removeEntry} onEdit={onEdit} today={today} updateEntry={updateEntry} setHistoryModalEntry={setHistoryModalEntry} />}
-        </article>
-        <article className="panel">
-          <div className="panel-heading"><div><span>Concentração</span><h3>Receita por origem</h3></div></div>
-          {bySource.length === 0
-            ? <EmptyState title="Sem origens cadastradas" description="As fontes de receita aparecem aqui quando você adicionar entradas." />
-            : <div className="rank-list">{bySource.map((item, index) => <div key={item.source}><span><i>{index + 1}</i>{item.source}</span><strong>{brl.format(item.amount)}</strong></div>)}</div>}
+            : <EntryTable entries={[...entries].sort((a, b) => a.dueDate.localeCompare(b.dueDate))} settleEntry={settleEntry} removeEntry={removeEntry} onEdit={onEdit} today={today} updateEntry={updateEntry} setHistoryModalEntry={setHistoryModalEntry} />}
         </article>
       </section>
     </>
   );
 }
 
-function CardsPage({ entries, commitments, state, selectedPeriod }: { entries: FinanceEntry[]; commitments: Array<{ month: string; value: number }>; state: FinanceState; selectedPeriod: string }) {
+function CardsPage({ commitments, state, selectedPeriod }: { commitments: Array<{ month: string; value: number }>; state: FinanceState; selectedPeriod: string }) {
   const [showFutureBreakdown, setShowFutureBreakdown] = useState(false);
-  const installments = entries.filter((entry) => entry.installment);
-  const remaining = installments.filter((entry) => entry.status !== "realizado").reduce((sum, entry) => sum + entry.amount, 0);
-  const macbook = entries.filter((entry) => entry.title === "MacBook" && entry.status !== "realizado").reduce((sum, entry) => sum + entry.amount, 0);
+  const installments = state.entries
+    .filter((entry) => entry.kind === "expense" && entry.installment && entry.status !== "realizado")
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  const remaining = installments.reduce((sum, entry) => sum + entry.amount, 0);
+  const [selectedYear, selectedMonth] = selectedPeriod.split("-").map(Number);
+  const nextMonthDate = new Date(selectedYear, selectedMonth, 1);
+  const nextMonthPeriod = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, "0")}`;
+  const nextMonthCommitted = state.entries
+    .filter((entry) => entry.kind === "expense" && entry.paidBy !== "father" && entry.status !== "realizado" && (entry.invoiceMonth || entry.dueDate.slice(0, 7)) === nextMonthPeriod)
+    .reduce((sum, entry) => sum + entry.amount, 0);
 
   const unicredView = buildInvoiceView(state, "Unicred", selectedPeriod);
   const nubankView = buildInvoiceView(state, "Nubank", selectedPeriod);
@@ -1305,9 +1390,7 @@ function CardsPage({ entries, commitments, state, selectedPeriod }: { entries: F
 
   const cardsOpen = unicredView.identifiedSubtotal + nubankView.identifiedSubtotal;
 
-  const allUnicredEntries = state.entries.filter((e) => e.account?.toLowerCase() === "unicred" && e.transactionType !== "invoice_payment");
-  const allNubankEntries = state.entries.filter((e) => e.account?.toLowerCase() === "nubank" && e.transactionType !== "invoice_payment");
-  const importedCount = Number(allUnicredEntries.length > 0) + Number(allNubankEntries.length > 0);
+  const importedCount = Number(unicredView.entries.length > 0) + Number(nubankView.entries.length > 0);
 
   const unicredStatusLabel = unicredView.status === "paid" ? "Paga" : unicredView.status === "closed" ? "Fechada" : unicredView.status === "partial" ? "Parcial" : "Aberta";
   const nubankStatusLabel = nubankView.status === "paid" ? "Paga" : nubankView.status === "closed" ? "Fechada" : nubankView.status === "partial" ? "Parcial" : "Aberta";
@@ -1315,10 +1398,10 @@ function CardsPage({ entries, commitments, state, selectedPeriod }: { entries: F
   return (
     <>
       <section className="decision-hero flex-col" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "16px", padding: "28px 32px" }}>
-        <span className="eyebrow"><CreditCard size={16} /> Faturas e Parcelas</span>
+        <span className="eyebrow"><CreditCard size={16} /> Compromissos atuais e futuros</span>
         <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center", flexWrap: "wrap", gap: "20px" }}>
           <div style={{ flex: 1, minWidth: "280px" }}>
-            <h2 style={{ fontSize: "14px", fontWeight: 600, color: "var(--muted-2)", margin: 0 }}>Subtotal identificado nas faturas</h2>
+            <h2 style={{ fontSize: "14px", fontWeight: 600, color: "var(--muted-2)", margin: 0 }}>Quanto está identificado nas faturas de {monthLabel(selectedPeriod)}?</h2>
             <strong style={{ fontSize: "38px", fontWeight: 800, color: "var(--text)", display: "block", margin: "6px 0", letterSpacing: "-0.02em" }}>{brl.format(cardsOpen)}</strong>
             <p style={{ fontSize: "13px", color: "var(--muted)", margin: 0, lineHeight: "1.4" }}>
               Subtotal identificado nos prints — {monthLabel(selectedPeriod)}.
@@ -1344,39 +1427,41 @@ function CardsPage({ entries, commitments, state, selectedPeriod }: { entries: F
       </section>
 
       <section className="stat-grid stat-grid-three">
-        <StatCard 
-          title="Comprometido futuro" 
-          value={brl.format(remaining)} 
-          subtitle="valor futuro parcelado" 
-          icon={WalletCards} 
-          tone="warning" 
+        <StatCard
+          title="Parcelas futuras"
+          value={brl.format(remaining)}
+          subtitle={`${installments.length} parcelas ainda em aberto`}
+          icon={WalletCards}
+          tone="warning"
           tooltip="Total de parcelas futuras cadastradas."
           onClick={() => setShowFutureBreakdown(true)}
         />
-        <StatCard 
-          title="MacBook restante" 
-          value={brl.format(macbook)} 
-          subtitle={macbook > 0 ? `${entries.filter((e) => e.title === "MacBook" && e.status !== "realizado").length} parcelas restantes` : "Quitado"} 
-          icon={CreditCard} 
-          tooltip="Saldo devedor restante estimado para a compra do MacBook."
+        <StatCard
+          title={`Próximo mês`}
+          value={brl.format(nextMonthCommitted)}
+          subtitle={`já comprometido em ${monthLabel(nextMonthPeriod)}`}
+          icon={CalendarClock}
+          tooltip="Despesas e parcelas em aberto já associadas ao próximo mês."
         />
-        <StatCard 
-          title="Faturas reconhecidas" 
-          value={`${importedCount} de 2`} 
-          subtitle={unicredView.identifiedSubtotal > 0 && nubankView.identifiedSubtotal > 0 ? "Unicred e Nubank com lançamentos" : "Verificar reconciliação"} 
-          icon={FileSpreadsheet} 
-          tone={importedCount < 2 ? "warning" : "positive"} 
+        <StatCard
+          title="Cartões identificados"
+          value={`${importedCount} de 2`}
+          subtitle={unicredView.identifiedSubtotal > 0 && nubankView.identifiedSubtotal > 0 ? "Unicred e Nubank encontrados" : "há cartão sem lançamentos"}
+          icon={FileSpreadsheet}
+          tone={importedCount < 2 ? "warning" : "positive"}
           tooltip="Faturas do Nubank e Unicred com lançamentos identificados no sistema."
         />
       </section>
       <section className="dashboard-grid dashboard-grid-primary">
-        <article className="panel panel-wide">
+        <article className="panel">
           <div className="panel-heading"><div><span>Calendário futuro</span><h3>Quanto já está comprometido por mês</h3></div></div>
-          <div className="chart-wrap chart-large"><ResponsiveContainer width="100%" height="100%"><BarChart data={commitments} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}><CartesianGrid stroke="#2a2d31" vertical={false}/><XAxis dataKey="month" stroke="#8c9199" tickLine={false} axisLine={false}/><YAxis stroke="#8c9199" tickLine={false} axisLine={false} tickFormatter={(value) => `R$${value}`}/><Tooltip content={<ChartTooltip />} /><Bar dataKey="value" name="Comprometido" fill="#ff7a18" radius={[8,8,0,0]} /></BarChart></ResponsiveContainer></div>
+          <div className="chart-wrap chart-large"><ResponsiveContainer width="100%" height="100%"><BarChart data={commitments} margin={{ top: 10, right: 10, left: 4, bottom: 0 }}><CartesianGrid stroke="#2a2d31" vertical={false}/><XAxis dataKey="month" stroke="#8c9199" tickLine={false} axisLine={false}/><YAxis width={58} stroke="#8c9199" tickLine={false} axisLine={false} tickFormatter={(value) => `R$${value}`}/><Tooltip content={<ChartTooltip />} /><Bar dataKey="value" name="Comprometido" fill="#ff7a18" radius={[8,8,0,0]} /></BarChart></ResponsiveContainer></div>
         </article>
         <article className="panel">
-          <div className="panel-heading"><div><span>Parcelas</span><h3>Compromissos ativos</h3></div></div>
-          <div className="compact-list">{installments.slice(0, 10).map((entry) => <div key={entry.id}><span><strong>{entry.title}</strong><small>{formatDate(entry.dueDate)} · {entry.installment}</small></span><b>{brl.format(entry.amount)}</b></div>)}</div>
+          <div className="panel-heading"><div><span>Próximos vencimentos</span><h3>Parcelas ainda ativas</h3></div></div>
+          {installments.length === 0
+            ? <EmptyState title="Nenhuma parcela em aberto" description="As compras parceladas futuras aparecerão aqui." />
+            : <div className="compact-list">{installments.slice(0, 10).map((entry) => <div key={entry.id}><span><strong>{entry.title}</strong><small>{formatDate(entry.dueDate)} · {entry.installment} · {entry.account || "Conta não informada"}</small></span><b>{brl.format(entry.amount)}</b></div>)}</div>}
         </article>
       </section>
 
@@ -1420,9 +1505,8 @@ function CardsPage({ entries, commitments, state, selectedPeriod }: { entries: F
   );
 }
 
-function SpendingPage({ entries, categorySpend, settleEntry, removeEntry, onEdit, today, updateEntry, setHistoryModalEntry, state, selectedPeriod }: {
+function SpendingPage({ entries, settleEntry, removeEntry, onEdit, today, updateEntry, setHistoryModalEntry, state, selectedPeriod }: {
   entries: FinanceEntry[];
-  categorySpend: Array<{ name: string; value: number }>;
   settleEntry: (entry: FinanceEntry) => void;
   removeEntry: (id: string) => void;
   onEdit: (entry: FinanceEntry) => void;
@@ -1437,14 +1521,14 @@ function SpendingPage({ entries, categorySpend, settleEntry, removeEntry, onEdit
   const filteredEntries = useMemo(() => {
     if (spendingViewMode === "compra") {
       return state.entries.filter((e) => {
-        if (e.kind !== "expense" || e.paidBy === "father") return false;
+        if (e.kind !== "expense") return false;
         const purchaseMonth = e.purchaseDate ? e.purchaseDate.slice(0, 7) : e.dueDate.slice(0, 7);
         return purchaseMonth === selectedPeriod;
       });
     }
     if (spendingViewMode === "fatura") {
       return state.entries.filter((e) => {
-        if (e.kind !== "expense" || e.paidBy === "father") return false;
+        if (e.kind !== "expense") return false;
         const invMonth = e.invoiceMonth || e.dueDate.slice(0, 7);
         const cardFilter = e.account?.toLowerCase() === "unicred" || e.account?.toLowerCase() === "nubank";
         if (cardFilter) return invMonth === selectedPeriod;
@@ -1454,9 +1538,16 @@ function SpendingPage({ entries, categorySpend, settleEntry, removeEntry, onEdit
     return entries;
   }, [spendingViewMode, state.entries, entries, selectedPeriod]);
 
-  const total = filteredEntries.filter((entry) => entry.paidBy !== "father").reduce((sum, entry) => sum + entry.amount, 0);
-  const paidByFather = filteredEntries.filter((entry) => entry.paidBy === "father").reduce((sum, entry) => sum + entry.amount, 0);
-  const sorted = [...spendingByCategory(filteredEntries)].sort((a, b) => b.value - a.value);
+  const ownEntries = filteredEntries.filter((entry) => entry.paidBy !== "father");
+  const thirdPartyEntries = filteredEntries.filter((entry) => entry.paidBy === "father");
+  const total = ownEntries.reduce((sum, entry) => sum + entry.amount, 0);
+  const paidTotal = ownEntries.filter((entry) => entry.status === "realizado").reduce((sum, entry) => sum + entry.amount, 0);
+  const pendingTotal = ownEntries.filter((entry) => entry.status !== "realizado").reduce((sum, entry) => sum + entry.amount, 0);
+  const paidByFather = thirdPartyEntries.reduce((sum, entry) => sum + entry.amount, 0);
+  const sorted = [...spendingByCategory(ownEntries)].sort((a, b) => b.value - a.value);
+  const byAccount = [...new Set(ownEntries.map((entry) => entry.account || "Sem conta informada"))]
+    .map((account) => ({ account, amount: ownEntries.filter((entry) => (entry.account || "Sem conta informada") === account).reduce((sum, entry) => sum + entry.amount, 0) }))
+    .sort((a, b) => b.amount - a.amount);
   const maxVal = sorted[0]?.value ?? 1;
 
   const viewLabel = spendingViewMode === "compra" ? "por data da compra" : spendingViewMode === "fatura" ? "por fatura" : "por mês financeiro";
@@ -1464,13 +1555,13 @@ function SpendingPage({ entries, categorySpend, settleEntry, removeEntry, onEdit
   return (
     <>
       <section className="decision-hero flex-col" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "16px", padding: "28px 32px", marginBottom: "24px" }}>
-        <span className="eyebrow"><ReceiptText size={16} /> Análise de Despesas</span>
+        <span className="eyebrow"><ReceiptText size={16} /> Destinos do dinheiro</span>
         <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
           <div style={{ flex: 1, minWidth: "280px" }}>
-            <h2 style={{ fontSize: "14px", fontWeight: 600, color: "var(--muted-2)", margin: 0 }}>Quanto foi comprometido {viewLabel}?</h2>
+            <h2 style={{ fontSize: "14px", fontWeight: 600, color: "var(--muted-2)", margin: 0 }}>Quanto saiu ou está comprometido {viewLabel}?</h2>
             <strong style={{ fontSize: "38px", fontWeight: 800, color: "var(--text)", display: "block", margin: "6px 0", letterSpacing: "-0.02em" }}>{brl.format(total)}</strong>
             <p style={{ fontSize: "13px", color: "var(--muted)", margin: 0, lineHeight: "1.4" }}>
-              {spendingViewMode === "compra" ? "Compras realizadas neste mês, independente da fatura em que serão pagas." : spendingViewMode === "fatura" ? "Despesas agrupadas por ciclo de fatura dos cartões e vencimentos de contas." : "Total de despesas e parcelas no período de caixa atual, excluindo pagamentos financiados por terceiros."}
+              {spendingViewMode === "compra" ? "Compras feitas neste mês, independentemente da fatura em que serão pagas." : spendingViewMode === "fatura" ? "Despesas agrupadas pelo ciclo da fatura ou vencimento da conta." : "Despesas que afetam o seu caixa no período selecionado; valores pagos por terceiros aparecem separados."}
             </p>
           </div>
           <div className="type-toggle" role="group" aria-label="Modo de visualização" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: "2px", height: "36px" }}>
@@ -1482,52 +1573,65 @@ function SpendingPage({ entries, categorySpend, settleEntry, removeEntry, onEdit
       </section>
 
       <section className="stat-grid stat-grid-three">
-        <StatCard 
-          title="Comprometido" 
-          value={brl.format(total)} 
-          subtitle={`${filteredEntries.length} lançamentos`} 
-          icon={ReceiptText} 
-          tone="warning" 
-          tooltip="Total de despesas e parcelas no período selecionado."
+        <StatCard
+          title="Já pago"
+          value={brl.format(paidTotal)}
+          subtitle={`${ownEntries.filter((entry) => entry.status === "realizado").length} saídas concluídas`}
+          icon={Check}
+          tooltip="Despesas do período já marcadas como pagas."
         />
-        <StatCard 
-          title="Pago por você" 
-          value={brl.format(total)} 
-          subtitle="caixa operacional" 
-          icon={ArrowDownRight} 
-          tooltip="Despesas pagas ou a pagar diretamente pelo seu caixa."
+        <StatCard
+          title="Ainda a pagar"
+          value={brl.format(pendingTotal)}
+          subtitle={`${ownEntries.filter((entry) => entry.status !== "realizado").length} compromissos em aberto`}
+          icon={BellRing}
+          tone={pendingTotal > 0 ? "warning" : "default"}
+          tooltip="Despesas cadastradas que ainda não foram marcadas como pagas."
         />
-        <StatCard 
-          title="Pago pelo seu pai" 
-          value={brl.format(paidByFather)} 
-          subtitle="sem impacto no caixa" 
-          icon={ShieldCheck} 
+        <StatCard
+          title="Pago por terceiros"
+          value={brl.format(paidByFather)}
+          subtitle={`${thirdPartyEntries.length} lançamentos sem impacto no seu caixa`}
+          icon={ShieldCheck}
           tooltip="Despesas de custo de vida custeadas pelo seu pai (sem impacto no seu caixa)."
         />
       </section>
       <section className="dashboard-grid dashboard-grid-primary">
         <article className="panel">
-          <div className="panel-heading"><div><span>Composição</span><h3>Gastos por categoria</h3></div><span className="soft-badge">{sorted.length} categorias</span></div>
-          <div className="hbar-list">
-            {sorted.map((item, index) => (
-              <div className="hbar-item" key={item.name}>
-                <div className="hbar-header">
-                  <span>{item.name}</span>
-                  <div>
-                    <strong>{brl.format(item.value)}</strong>
-                    <span className="hbar-pct">({total > 0 ? ((item.value / total) * 100).toFixed(0) : 0}%)</span>
+          <div className="panel-heading"><div><span>Destino por categoria</span><h3>Onde o dinheiro foi usado</h3></div><span className="soft-badge">{sorted.length} categorias</span></div>
+          {sorted.length === 0
+            ? <EmptyState title="Nenhuma saída neste recorte" description="Os destinos aparecem aqui assim que houver despesas cadastradas." />
+            : <div className="hbar-list">
+                {sorted.map((item, index) => (
+                  <div className="hbar-item" key={item.name}>
+                    <div className="hbar-header">
+                      <span>{item.name}</span>
+                      <div>
+                        <strong>{brl.format(item.value)}</strong>
+                        <span className="hbar-pct">({total > 0 ? ((item.value / total) * 100).toFixed(0) : 0}%)</span>
+                      </div>
+                    </div>
+                    <div className="hbar-track">
+                      <div className="hbar-fill" style={{ width: `${(item.value / maxVal) * 100}%`, background: CHART_COLORS[index % CHART_COLORS.length] }} />
+                    </div>
                   </div>
-                </div>
-                <div className="hbar-track">
-                  <div className="hbar-fill" style={{ width: `${(item.value / maxVal) * 100}%`, background: CHART_COLORS[index % CHART_COLORS.length] }} />
-                </div>
-              </div>
-            ))}
-          </div>
+                ))}
+              </div>}
         </article>
-        <article className="panel panel-wide">
-          <div className="panel-heading"><div><span>Lançamentos</span><h3>Despesas e responsáveis</h3></div></div>
-          <EntryTable entries={filteredEntries.sort((a, b) => a.dueDate.localeCompare(b.dueDate))} settleEntry={settleEntry} removeEntry={removeEntry} onEdit={onEdit} today={today} updateEntry={updateEntry} setHistoryModalEntry={setHistoryModalEntry} />
+        <article className="panel">
+          <div className="panel-heading"><div><span>Meio de pagamento</span><h3>Por onde o dinheiro sai</h3></div><WalletCards size={20} /></div>
+          {byAccount.length === 0
+            ? <EmptyState title="Sem contas identificadas" description="Informe a conta ou o cartão nos lançamentos para ver esta divisão." />
+            : <div className="rank-list">{byAccount.map((item, index) => <div key={item.account}><span><i>{index + 1}</i>{item.account}</span><strong>{brl.format(item.amount)}</strong></div>)}</div>}
+          <p className="panel-explainer">Categorias explicam o motivo da saída; contas e cartões mostram por onde ela foi paga.</p>
+        </article>
+      </section>
+      <section className="dashboard-grid" style={{ gridTemplateColumns: "1fr", marginTop: "24px" }}>
+        <article className="panel">
+          <div className="panel-heading"><div><span>Detalhamento das saídas</span><h3>O que foi pago, por quem e quando</h3></div><span className="soft-badge">{filteredEntries.length} lançamentos</span></div>
+          {filteredEntries.length === 0
+            ? <EmptyState title="Nenhuma despesa neste recorte" description="Altere o modo de visualização ou cadastre uma nova saída." />
+            : <EntryTable entries={[...filteredEntries].sort((a, b) => a.dueDate.localeCompare(b.dueDate))} settleEntry={settleEntry} removeEntry={removeEntry} onEdit={onEdit} today={today} updateEntry={updateEntry} setHistoryModalEntry={setHistoryModalEntry} />}
         </article>
       </section>
     </>
@@ -1587,9 +1691,9 @@ function GoalPage({ state, summary, goalGap, cashflow, setState, today }: { stat
         </div>
       </section>
       <section className="dashboard-grid dashboard-grid-primary">
-        <article className="panel panel-wide">
+        <article className="panel">
           <div className="panel-heading"><div><span>Trajetória</span><h3>Projeção por cenário até R$ {(state.goal / 1000).toFixed(0)}k</h3></div><span className="soft-badge">3 cenários</span></div>
-          <div className="chart-wrap chart-large"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}><defs><linearGradient id="goalGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.3}/><stop offset="95%" stopColor="#f97316" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="#1c1f27" vertical={false}/><XAxis dataKey="month" stroke="#5a5f6d" tickLine={false} axisLine={false} tick={{ fontSize: 11 }}/><YAxis stroke="#5a5f6d" tickLine={false} axisLine={false} tickFormatter={(v) => `R$${v}`} tick={{ fontSize: 11 }}/><Tooltip content={<ChartTooltip />} /><Line type="monotone" dataKey="otimista" name="Otimista" stroke="#22c55e" strokeWidth={2} dot={false} strokeDasharray="6 3" connectNulls /><Line type="monotone" dataKey="provavel" name="Provável" stroke="#f97316" strokeWidth={2.5} dot={false} connectNulls /><Line type="monotone" dataKey="conservador" name="Conservador" stroke="#ef4444" strokeWidth={2} dot={false} strokeDasharray="3 3" connectNulls /></LineChart></ResponsiveContainer></div>
+          <div className="chart-wrap chart-large"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData} margin={{ top: 10, right: 10, left: 4, bottom: 0 }}><defs><linearGradient id="goalGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.3}/><stop offset="95%" stopColor="#f97316" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="#1c1f27" vertical={false}/><XAxis dataKey="month" stroke="#5a5f6d" tickLine={false} axisLine={false} tick={{ fontSize: 11 }}/><YAxis width={58} stroke="#5a5f6d" tickLine={false} axisLine={false} tickFormatter={(v) => `R$${v}`} tick={{ fontSize: 11 }}/><Tooltip content={<ChartTooltip />} /><Line type="monotone" dataKey="otimista" name="Otimista" stroke="#22c55e" strokeWidth={2} dot={false} strokeDasharray="6 3" connectNulls /><Line type="monotone" dataKey="provavel" name="Provável" stroke="#f97316" strokeWidth={2.5} dot={false} connectNulls /><Line type="monotone" dataKey="conservador" name="Conservador" stroke="#ef4444" strokeWidth={2} dot={false} strokeDasharray="3 3" connectNulls /></LineChart></ResponsiveContainer></div>
           <div style={{ display: "flex", gap: "16px", padding: "8px 16px", fontSize: "12px", color: "var(--muted)", flexWrap: "wrap" }}><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><span style={{ width: "12px", height: "3px", background: "#ef4444", borderRadius: "2px", display: "inline-block" }} />Conservador</span><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><span style={{ width: "12px", height: "3px", background: "#f97316", borderRadius: "2px", display: "inline-block" }} />Provável</span><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><span style={{ width: "12px", height: "3px", background: "#22c55e", borderRadius: "2px", display: "inline-block" }} />Otimista</span></div>
           <div className="chart-note"><TrendingUp size={15} /><span>Cada cenário usa uma premissa de aporte mensal diferente. Use o simulador ao lado para ajustar o prazo.</span></div>
         </article>
@@ -1641,7 +1745,7 @@ function ImportPage({ uploadedFiles, importPreview, setImportPreview, handleFile
         <label className="upload-button"><Upload size={22} /><span>Selecionar arquivos</span><small>CSV, PDF, PNG ou JPG</small><input type="file" multiple accept=".csv,.pdf,.png,.jpg,.jpeg" onChange={handleFile} /></label>
       </section>
       <section className="dashboard-grid dashboard-grid-primary">
-        <article className="panel panel-wide">
+        <article className="panel">
           <div className="panel-heading"><div><span>Pré-visualização</span><h3>Revise antes de importar</h3></div>{importPreview.length > 0 && <button className="primary-button compact" onClick={confirmImport}><Check size={16} />Confirmar {importPreview.length}</button>}</div>
           {importPreview.length ? (
             <div className="import-table-wrap"><table className="data-table"><thead><tr><th>Descrição</th><th>Data</th><th>Tipo</th><th>Categoria</th><th>Valor</th><th /></tr></thead><tbody>{importPreview.map((entry, index) => <tr key={index}><td><input value={entry.title ?? ""} onChange={(event) => setImportPreview((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, title: event.target.value } : row))} /></td><td><input type="date" value={normalizeImportedDate(entry.dueDate ?? today, today)} onChange={(event) => setImportPreview((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, dueDate: event.target.value } : row))} /></td><td><select value={entry.kind ?? "expense"} onChange={(event) => setImportPreview((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, kind: event.target.value as FinanceEntry["kind"] } : row))}><option value="expense">Despesa</option><option value="income">Entrada</option></select></td><td><input value={entry.category ?? "Outros"} onChange={(event) => setImportPreview((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, category: event.target.value } : row))} /></td><td><input type="number" step="0.01" value={entry.amount ?? 0} onChange={(event) => setImportPreview((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, amount: Number(event.target.value) } : row))} /></td><td><button className="icon-button danger-icon" onClick={() => setImportPreview((rows) => rows.filter((_, rowIndex) => rowIndex !== index))}><Trash2 size={16} /></button></td></tr>)}</tbody></table></div>
@@ -2160,103 +2264,84 @@ function EntryModal({ onClose, onSubmit, initialEntry, today, setHistoryModalEnt
 // ToolsPage importado de @/components/ToolsPage
 
 function QualityPage({ state, selectedPeriod, pushToast }: { state: FinanceState; selectedPeriod: string; pushToast: (message: string, type: ToastType) => void }) {
-  const [stats, setStats] = useState(analytics.getStats());
-  const [closes, setCloses] = useState<MonthClose[]>([]);
   const [currentClose, setCurrentClose] = useState<MonthClose | null>(null);
 
   useEffect(() => {
-    setStats(analytics.getStats());
-    setCloses(getAllCloses());
     setCurrentClose(getMonthClose(selectedPeriod));
   }, [selectedPeriod]);
 
   const refresh = () => {
-    setStats(analytics.getStats());
-    setCloses(getAllCloses());
     setCurrentClose(getMonthClose(selectedPeriod));
   };
 
   // Financial quality metrics
-  const unicredEntries = state.entries.filter((e) => e.account?.toLowerCase() === "unicred");
-  const nubankEntries = state.entries.filter((e) => e.account?.toLowerCase() === "nubank");
+  const allEntries = state.entries.filter((entry) => isEntryInPeriod(entry, selectedPeriod));
+  const unicredEntries = allEntries.filter((e) => e.account?.toLowerCase() === "unicred");
+  const nubankEntries = allEntries.filter((e) => e.account?.toLowerCase() === "nubank");
   const invoicesRecognized = (unicredEntries.length > 0 ? 1 : 0) + (nubankEntries.length > 0 ? 1 : 0);
   const invoicesTotal = 2;
-  const allEntries = state.entries;
   const entriesWithCategory = allEntries.filter((e) => e.category && e.category !== "Outros");
   const entriesWithQuality = allEntries.filter((e) => e.dataQuality === "completo");
-  const closedPeriods = closes.filter((c) => c.status === "closed").length;
-  const invoiceReconciliationRate = Array.isArray(state.invoices) && state.invoices.length > 0
-    ? state.invoices.filter((inv) => {
+  const periodInvoices = Array.isArray(state.invoices) ? state.invoices.filter((invoice) => invoice.referenceMonth === selectedPeriod) : [];
+  const invoiceReconciliationRate = periodInvoices.length > 0
+    ? periodInvoices.filter((inv) => {
         const subtotal = allEntries
           .filter((e) => e.account?.toLowerCase() === inv.cardId.toLowerCase() && e.invoiceMonth === inv.referenceMonth)
           .reduce((sum, e) => sum + e.amount, 0);
         return inv.officialTotal !== undefined && Math.abs(subtotal - inv.officialTotal) < 0.01;
-      }).length / state.invoices.length
+      }).length / periodInvoices.length
     : 0;
 
   const invoicesWarning = invoicesRecognized < invoicesTotal;
   const reconciliationWarning = invoiceReconciliationRate < 1;
   const categoriesWarning = entriesWithCategory.length < allEntries.length;
+  const completenessRate = entriesWithQuality.length / Math.max(allEntries.length, 1);
+  const categoryRate = entriesWithCategory.length / Math.max(allEntries.length, 1);
+  const invoiceRecognitionRate = invoicesRecognized / invoicesTotal;
+  const qualityScore = Math.round(((completenessRate + categoryRate + invoiceRecognitionRate + invoiceReconciliationRate) / 4) * 100);
+  const qualityIssues = [
+    invoicesWarning ? `${invoicesTotal - invoicesRecognized} cartão(ões) sem lançamentos reconhecidos` : null,
+    reconciliationWarning ? "Há faturas sem total oficial conciliado" : null,
+    categoriesWarning ? `${allEntries.length - entriesWithCategory.length} lançamento(s) sem categoria específica` : null,
+    entriesWithQuality.length < allEntries.length ? `${allEntries.length - entriesWithQuality.length} lançamento(s) com dados parciais ou estimados` : null,
+  ].filter(Boolean) as string[];
 
   return (
     <>
       <section className="decision-hero compact-hero" style={{ marginBottom: "24px" }}>
         <div>
-          <span className="eyebrow"><Gauge size={16} /> Qualidade do produto</span>
-          <h2 style={{ fontSize: "16px", fontWeight: 600, marginTop: "4px" }}>Métricas de uso e validação financeira</h2>
+          <span className="eyebrow"><Gauge size={16} /> Confiança nos dados</span>
+          <h2 style={{ fontSize: "16px", fontWeight: 600, marginTop: "4px" }}>Os dados estão prontos para fechar {monthLabel(selectedPeriod)}?</h2>
           <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "4px" }}>
-            {stats.last30d} eventos de uso nos últimos 30 dias · {stats.taskCompletionRate * 100}% conclusão de tarefas · {stats.errorCount} erros de interface
+            Índice de confiança de {qualityScore}% · {qualityIssues.length === 0 ? "nenhuma pendência estrutural encontrada" : `${qualityIssues.length} pontos precisam de revisão`}
           </p>
         </div>
         <button className="secondary-button" style={{ fontSize: "11px", padding: "4px 10px" }} onClick={refresh}>Atualizar</button>
       </section>
 
-      {/* Usage Quality */}
       <section style={{ marginBottom: "8px" }}>
-        <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Qualidade de Uso</span>
+        <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Cobertura dos dados financeiros</span>
       </section>
       <section className="dashboard-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
         <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
-          <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Taxa conclusão</span>
-          <strong style={{ fontSize: "28px" }}>{(stats.taskCompletionRate * 100).toFixed(0)}%</strong>
-          <small style={{ fontSize: "11px", color: "var(--muted)" }}>{stats.last30d} tarefas · {stats.errorCount} erros</small>
-        </article>
-        <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
-          <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Fechamentos</span>
-          <strong style={{ fontSize: "28px" }}>{stats.monthClosings}</strong>
-          <small style={{ fontSize: "11px", color: "var(--muted)" }}>{closedPeriods} meses fechados</small>
-        </article>
-        <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
-          <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Feedback</span>
-          <strong style={{ fontSize: "28px" }}>{stats.feedbackCount}</strong>
-          <small style={{ fontSize: "11px", color: "var(--muted)" }}>respostas coletadas</small>
-        </article>
-      </section>
-
-      {/* Financial Quality */}
-      <section style={{ marginTop: "24px", marginBottom: "8px" }}>
-        <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Qualidade Financeira</span>
-      </section>
-      <section className="dashboard-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-        <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
-          <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Faturas reconhecidas</span>
-          <strong style={{ fontSize: "28px", color: invoicesWarning ? "var(--warning)" : "var(--success)" }}>{invoicesRecognized} de {invoicesTotal}</strong>
-          <small style={{ fontSize: "11px", color: "var(--muted)" }}>cartões com lançamentos identificados</small>
-        </article>
-        <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
-          <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Reconciliação</span>
-          <strong style={{ fontSize: "28px", color: reconciliationWarning ? "var(--warning)" : "var(--success)" }}>{(invoiceReconciliationRate * 100).toFixed(0)}%</strong>
-          <small className="quality-small">faturas com total oficial batendo</small>
+          <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Dados completos</span>
+          <strong style={{ fontSize: "28px", color: completenessRate < 1 ? "var(--warning)" : "var(--success)" }}>{(completenessRate * 100).toFixed(0)}%</strong>
+          <small style={{ fontSize: "11px", color: "var(--muted)" }}>{entriesWithQuality.length} de {allEntries.length} lançamentos</small>
         </article>
         <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
           <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Categorias definidas</span>
-          <strong style={{ fontSize: "28px", color: categoriesWarning ? "var(--warning)" : "var(--success)" }}>{((entriesWithCategory.length / Math.max(allEntries.length, 1)) * 100).toFixed(0)}%</strong>
+          <strong style={{ fontSize: "28px", color: categoriesWarning ? "var(--warning)" : "var(--success)" }}>{(categoryRate * 100).toFixed(0)}%</strong>
           <small style={{ fontSize: "11px", color: "var(--muted)" }}>{entriesWithCategory.length} de {allEntries.length} lançamentos</small>
+        </article>
+        <article className="panel" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
+          <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Faturas conciliadas</span>
+          <strong style={{ fontSize: "28px", color: reconciliationWarning ? "var(--warning)" : "var(--success)" }}>{(invoiceReconciliationRate * 100).toFixed(0)}%</strong>
+          <small style={{ fontSize: "11px", color: "var(--muted)" }}>{invoicesRecognized} de {invoicesTotal} cartões reconhecidos</small>
         </article>
       </section>
 
       <section className="dashboard-grid dashboard-grid-primary" style={{ marginTop: "24px" }}>
-        <article className="panel panel-wide">
+        <article className="panel">
           <div className="panel-heading"><div><span>Fechamento mensal</span><h3>{currentClose?.period || selectedPeriod}</h3></div></div>
           {currentClose && (
             <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -2314,32 +2399,15 @@ function QualityPage({ state, selectedPeriod, pushToast }: { state: FinanceState
           )}
         </article>
         <article className="panel">
-          <div className="panel-heading"><div><span>Tarefas</span><h3>Mais lentas (top 10)</h3></div></div>
-          <div className="compact-list">
-            {stats.topSlowTasks.length === 0 ? (
-              <div className="empty-state"><span>Nenhuma tarefa registrada ainda.</span></div>
-            ) : stats.topSlowTasks.slice(0, 5).map((t, i) => (
-              <div key={t.id} style={{ fontSize: "12px", padding: "8px 16px", borderBottom: "1px solid var(--border)" }}>
-                <strong style={{ display: "block" }}>{t.action}</strong>
-                <span style={{ color: "var(--muted)", fontSize: "11px" }}>{t.category} · {(t.duration ?? 0).toFixed(0)}ms</span>
-              </div>
-            ))}
-          </div>
-        </article>
-      </section>
-
-      <section className="dashboard-grid" style={{ gridTemplateColumns: "1fr", marginTop: "24px" }}>
-        <article className="panel panel-wide">
-          <div className="panel-heading"><div><span>Navegação</span><h3>Páginas mais visitadas</h3></div></div>
-          <div className="rank-list">
-            {stats.pageViews.length === 0 ? (
-              <div className="empty-state"><span>Navegue pelas páginas do app para gerar dados de uso.</span></div>
-            ) : stats.pageViews.map(([key, count], i) => {
-              const viewLabelMap: Record<string, string> = { overview: "Visão geral", spending: "Gastos", receivables: "A receber", cards: "Cartões e parcelas", goal: "Meta", imports: "Importar", tools: "Exportar e backup", logs: "Monitoramento", quality: "Qualidade", corrections: "Central Correções", calculation_audit: "Auditoria de Cálculos", recovery_diagnostics: "Diagnósticos", all_entries: "Todos lançamentos" };
-              const cleanKey = key.replace("page:", "");
-              return <div key={key}><span><i>{i + 1}</i>{viewLabelMap[cleanKey] ?? cleanKey}</span><strong>{count} visitas</strong></div>;
-            })}
-          </div>
+          <div className="panel-heading"><div><span>Revisão necessária</span><h3>Pendências encontradas</h3></div><BellRing size={20} /></div>
+          {qualityIssues.length === 0 ? (
+            <EmptyState title="Dados consistentes" description="As verificações estruturais não encontraram pendências para este fechamento." />
+          ) : (
+            <div className="quality-issues">
+              {qualityIssues.map((issue, index) => <div key={issue}><span>{index + 1}</span><p>{issue}</p></div>)}
+            </div>
+          )}
+          <p className="panel-explainer">Abra “Corrigir dados” para localizar os lançamentos responsáveis por cada pendência.</p>
         </article>
       </section>
     </>
